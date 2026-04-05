@@ -144,10 +144,26 @@ impl McpViewState {
     pub fn select_prev(&mut self) {
         match self.active_pane {
             McpViewPane::ServerList => {
-                if self.selected_server > 0 { self.selected_server -= 1; }
+                let count = self.servers.len();
+                if count == 0 {
+                    return;
+                }
+                if self.selected_server == 0 {
+                    self.selected_server = count - 1;
+                } else {
+                    self.selected_server -= 1;
+                }
             }
             McpViewPane::ToolList | McpViewPane::ToolDetail => {
-                if self.selected_tool > 0 { self.selected_tool -= 1; }
+                let count = self.filtered_tools().len();
+                if count == 0 {
+                    return;
+                }
+                if self.selected_tool == 0 {
+                    self.selected_tool = count - 1;
+                } else {
+                    self.selected_tool -= 1;
+                }
             }
         }
     }
@@ -155,14 +171,15 @@ impl McpViewState {
     pub fn select_next(&mut self) {
         match self.active_pane {
             McpViewPane::ServerList => {
-                if self.selected_server + 1 < self.servers.len() {
-                    self.selected_server += 1;
+                let count = self.servers.len();
+                if count > 0 {
+                    self.selected_server = (self.selected_server + 1) % count;
                 }
             }
             McpViewPane::ToolList | McpViewPane::ToolDetail => {
                 let count = self.filtered_tools().len();
-                if self.selected_tool + 1 < count {
-                    self.selected_tool += 1;
+                if count > 0 {
+                    self.selected_tool = (self.selected_tool + 1) % count;
                 }
             }
         }

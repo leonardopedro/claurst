@@ -85,12 +85,12 @@ pub fn rustle_lines(pose: &RustlePose) -> [Line<'static>; 5] {
     let (r2l, r2e, r2r) = match pose {
         RustlePose::Default => (
             "█▄█",       // left claw tip, ▄ gap-to-connect, head edge
-            "▀ █ ▘",    // keep the left eye as-is; shift only the right eye highlight left
+            "▀ █▀ ",    // keep the left eye as-is; match the right eye size and move it up-left
             "█▄█",       // head edge, ▄ connect-to-gap, right claw tip
         ),
         RustlePose::ArmsUp => (
             "█▀█",       // ▀ = claw raised (upper half = arm up)
-            "▀ █ ▘",    // keep the left eye as-is; shift only the right eye highlight left
+            "▀ █▀ ",    // keep the left eye as-is; match the right eye size and move it up-left
             "█▀█",       // raised right claw
         ),
         RustlePose::LookLeft => (
@@ -130,4 +130,29 @@ pub fn rustle_lines(pose: &RustlePose) -> [Line<'static>; 5] {
     let row5 = Line::from("");
 
     [row1, row2, row3, row4, row5]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line_text(line: &Line<'_>) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<Vec<_>>()
+            .join("")
+    }
+
+    #[test]
+    fn default_pose_right_eye_matches_left_eye_size() {
+        let lines = rustle_lines(&RustlePose::Default);
+        assert_eq!(line_text(&lines[1]), "█▄█▀ █▀ █▄█");
+    }
+
+    #[test]
+    fn arms_up_pose_right_eye_matches_left_eye_size() {
+        let lines = rustle_lines(&RustlePose::ArmsUp);
+        assert_eq!(line_text(&lines[1]), "█▀█▀ █▀ █▀█");
+    }
 }

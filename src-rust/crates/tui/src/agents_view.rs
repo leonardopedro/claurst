@@ -6,9 +6,14 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Widget},
+    widgets::{Block, Borders, Paragraph, Widget},
 };
 use std::path::{Path, PathBuf};
+
+use crate::overlays::{
+    begin_modal_buf, modal_header_line_area, render_modal_title_buf, CLAURST_ACCENT,
+    CLAURST_MUTED, CLAURST_PANEL_BG, CLAURST_TEXT,
+};
 
 // ---------------------------------------------------------------------------
 // Data types
@@ -241,16 +246,23 @@ impl AgentsMenuState {
     }
 
     pub fn select_prev(&mut self) {
-        if self.selected_row > 0 {
+        let row_count = self.definitions.len() + 1;
+        if row_count == 0 {
+            return;
+        }
+        if self.selected_row == 0 {
+            self.selected_row = row_count - 1;
+        } else {
             self.selected_row -= 1;
         }
     }
 
     pub fn select_next(&mut self) {
-        let max = self.definitions.len(); // +1 for "create new"
-        if self.selected_row < max {
-            self.selected_row += 1;
+        let row_count = self.definitions.len() + 1;
+        if row_count == 0 {
+            return;
         }
+        self.selected_row = (self.selected_row + 1) % row_count;
     }
 
     pub fn confirm_selection(&mut self) {
@@ -533,75 +545,97 @@ pub fn render_agents_menu(state: &AgentsMenuState, area: Rect, buf: &mut Buffer)
         return;
     }
 
-    // Center dialog: 70% width, 80% height
-    let w = (area.width * 7 / 10).max(40).min(area.width);
-    let h = (area.height * 4 / 5).max(10).min(area.height);
-    let x = area.x + (area.width - w) / 2;
-    let y = area.y + (area.height - h) / 2;
-    let dialog_area = Rect {
-        x,
-        y,
-        width: w,
-        height: h,
+    let layout = begin_modal_buf(buf, area, 92, 30, 2, 1);
+    let (title, subtitle, footer) = match &state.route {
+        AgentsRoute::List => (
+            "Agents".to_string(),
+            format!(
+                " {} active  ·  {} definitions",
+                state.active_agents.len(),
+                state.definitions.len()
+            ),
+            " enter open  ·  esc close".to_string(),
+        ),
+        AgentsRoute::Detail(idx) => (
+            state
+                .definitions
+                .get(*idx)
+                .map(|def| def.name.clone())
+                .unwrap_or_else(|| "Agent".to_string()),
+            " Review configuration and prompt details.".to_string(),
+            " enter edit  ·  esc back".to_string(),
+        ),
+        AgentsRoute::Editor(Some(_)) => (
+            "Edit agent".to_string(),
+            " Update metadata, tools, and prompt instructions.".to_string(),
+            " tab move  ·  ctrl+s save  ·  esc back".to_string(),
+        ),
+        AgentsRoute::Editor(None) => (
+            "Create agent".to_string(),
+            " Define a new reusable agent for this workspace.".to_string(),
+            " tab move  ·  ctrl+s save  ·  esc back".to_string(),
+        ),
     };
-
-    Clear.render(dialog_area, buf);
+    render_modal_title_buf(buf, layout.header_area, &title, "esc");
+    if let Some(subtitle_area) = modal_header_line_area(layout.header_area, 1) {
+        Paragraph::new(Line::from(vec![Span::styled(
+            subtitle,
+            Style::default().fg(CLAURST_MUTED),
+        )]))
+        .render(subtitle_area, buf);
+    }
 
     match &state.route {
-        AgentsRoute::List => render_agents_list(state, dialog_area, buf),
+        AgentsRoute::List => render_agents_list(state, layout.body_area, buf),
         AgentsRoute::Detail(idx) => {
             if let Some(def) = state.definitions.get(*idx) {
-                render_agent_detail(def, dialog_area, buf);
+                render_agent_detail(def, layout.body_area, buf);
             }
         }
         AgentsRoute::Editor(Some(_idx)) => {
-            render_agent_editor(state, dialog_area, buf);
+            render_agent_editor(state, layout.body_area, buf);
         }
         AgentsRoute::Editor(None) => {
-            render_agent_editor(state, dialog_area, buf);
+            render_agent_editor(state, layout.body_area, buf);
         }
     }
+    Paragraph::new(Line::from(vec![Span::styled(
+        footer,
+        Style::default().fg(CLAURST_MUTED).add_modifier(Modifier::ITALIC),
+    )]))
+    .render(layout.footer_area, buf);
 }
 
 fn render_agents_list(state: &AgentsMenuState, area: Rect, buf: &mut Buffer) {
-    Block::default()
-        .title(" Agents [↑↓ navigate, Enter: select, Esc: close] ")
-        .borders(Borders::ALL)
-        .style(Style::default().fg(Color::Cyan))
-        .render(area, buf);
+    let mut lines = Vec::new();
+    if !state.active_agents.is_empty() {
+        lines.push(Line::from(vec![Span::styled(
+            " Active now",
+            Style::default().fg(CLAURST_ACCENT).add_modifier(Modifier::BOLD),
+        )]));
+        for agent in state.active_agents.iter().take(3) {
+            lines.push(Line::from(vec![
+                Span::styled(" ", Style::default().fg(CLAURST_MUTED)),
+                Span::styled(agent.name.clone(), Style::default().fg(CLAURST_TEXT)),
+                Span::styled(
+                    format!("  {}", agent.status.label()),
+                    Style::default().fg(agent.status.color()),
+                ),
+            ]));
+        }
+        lines.push(Line::from(""));
+    }
 
-    let inner = Rect {
-        x: area.x + 1,
-        y: area.y + 1,
-        width: area.width.saturating_sub(2),
-        height: area.height.saturating_sub(2),
-    };
-
-    // First row: [+ Create new agent]
     let create_selected = state.selected_row == 0;
-    let create_style = if create_selected {
-        Style::default()
-            .fg(Color::Green)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(Color::Green)
-    };
-    let prefix = if create_selected { "> " } else { "  " };
-    let create_line = Line::from(vec![
-        Span::styled(prefix, create_style),
-        Span::styled("[+ Create new agent]", create_style),
-    ]);
-    Paragraph::new(create_line).render(
-        Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: 1,
-        },
-        buf,
-    );
+    lines.push(agent_list_row(
+        "[+ Create new agent]".to_string(),
+        "Create a reusable workspace agent".to_string(),
+        create_selected,
+        area.width,
+    ));
+    lines.push(Line::from(""));
 
-    let max_visible = (inner.height as usize).saturating_sub(2);
+    let max_visible = (area.height as usize).saturating_sub(lines.len() + 1);
     let start = state
         .list_scroll
         .min(state.definitions.len().saturating_sub(max_visible));
@@ -612,93 +646,74 @@ fn render_agents_list(state: &AgentsMenuState, area: Rect, buf: &mut Buffer) {
         }
         let abs_idx = start + i;
         let selected = state.selected_row == abs_idx + 1;
-        let y = inner.y + 2 + i as u16;
-
-        let prefix = if selected { "> " } else { "  " };
-        let base = if selected {
-            Style::default().add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-        };
-
         let model_str = def.model.as_deref().unwrap_or("default");
         let shadow_suffix = if def.shadowed_by.is_some() { " ⚠" } else { "" };
-
-        let line = Line::from(vec![
-            Span::styled(prefix, base),
-            Span::styled(def.name.clone(), base.fg(Color::White)),
-            Span::styled(
-                format!("  {} | {}{}", model_str, def.source, shadow_suffix),
-                Style::default().fg(Color::DarkGray),
-            ),
-        ]);
-        let row_area = Rect {
-            x: inner.x,
-            y,
-            width: inner.width,
-            height: 1,
-        };
-        Paragraph::new(line).render(row_area, buf);
+        lines.push(agent_list_row(
+            def.name.clone(),
+            format!("{}  ·  {}{}", model_str, def.source, shadow_suffix),
+            selected,
+            area.width,
+        ));
     }
+    Paragraph::new(lines)
+        .style(Style::default().bg(CLAURST_PANEL_BG))
+        .render(area, buf);
 }
 
 fn render_agent_detail(def: &AgentDefinition, area: Rect, buf: &mut Buffer) {
-    let title = format!(" Agent: {} ", def.name);
-    Block::default()
-        .title(title.as_str())
-        .borders(Borders::ALL)
-        .style(Style::default().fg(Color::Cyan))
-        .render(area, buf);
-
-    let inner = Rect {
-        x: area.x + 1,
-        y: area.y + 1,
-        width: area.width.saturating_sub(2),
-        height: area.height.saturating_sub(2),
-    };
-
     let mut lines = Vec::new();
     lines.push(Line::from(vec![
-        Span::styled("Name:   ", Style::default().fg(Color::DarkGray)),
+        Span::styled(" Name       ", Style::default().fg(CLAURST_MUTED)),
         Span::styled(
             def.name.clone(),
             Style::default()
-                .fg(Color::White)
+                .fg(CLAURST_TEXT)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             format!("  ({})", def.source),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(CLAURST_MUTED),
         ),
     ]));
     lines.push(Line::from(vec![
-        Span::styled("Model:  ", Style::default().fg(Color::DarkGray)),
+        Span::styled(" Model      ", Style::default().fg(CLAURST_MUTED)),
         Span::raw(def.model.as_deref().unwrap_or("default").to_string()),
     ]));
     if let Some(mem) = &def.memory_scope {
         lines.push(Line::from(vec![
-            Span::styled("Memory: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(" Memory     ", Style::default().fg(CLAURST_MUTED)),
             Span::raw(mem.clone()),
         ]));
     }
     if !def.tools.is_empty() {
         lines.push(Line::from(vec![
-            Span::styled("Tools:  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(" Tools      ", Style::default().fg(CLAURST_MUTED)),
             Span::raw(def.tools.join(", ")),
         ]));
     } else {
         lines.push(Line::from(vec![
-            Span::styled("Tools:  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("All tools", Style::default().fg(Color::DarkGray)),
+            Span::styled(" Tools      ", Style::default().fg(CLAURST_MUTED)),
+            Span::styled("All tools", Style::default().fg(CLAURST_MUTED)),
         ]));
     }
     lines.push(Line::default());
     lines.push(Line::from(vec![Span::styled(
-        "Description:",
-        Style::default().fg(Color::DarkGray),
+        " Description",
+        Style::default().fg(CLAURST_ACCENT).add_modifier(Modifier::BOLD),
     )]));
     for line in def.description.lines() {
-        lines.push(Line::from(vec![Span::raw(format!("  {}", line))]));
+        lines.push(Line::from(vec![Span::raw(format!(" {}", line))]));
+    }
+    lines.push(Line::default());
+    lines.push(Line::from(vec![Span::styled(
+        " Prompt",
+        Style::default().fg(CLAURST_ACCENT).add_modifier(Modifier::BOLD),
+    )]));
+    for line in def.instructions.lines().take(8) {
+        lines.push(Line::from(vec![Span::styled(
+            format!(" {}", line),
+            Style::default().fg(CLAURST_TEXT),
+        )]));
     }
 
     if let Some(shadow) = &def.shadowed_by {
@@ -709,42 +724,19 @@ fn render_agent_detail(def: &AgentDefinition, area: Rect, buf: &mut Buffer) {
         )]));
     }
 
-    lines.push(Line::default());
-    lines.push(Line::from(vec![Span::styled(
-        "[Esc] back",
-        Style::default().fg(Color::DarkGray),
-    )]));
-
     Paragraph::new(lines)
         .wrap(ratatui::widgets::Wrap { trim: false })
-        .render(inner, buf);
+        .style(Style::default().bg(CLAURST_PANEL_BG))
+        .render(area, buf);
 }
 
 fn render_agent_editor(state: &AgentsMenuState, area: Rect, buf: &mut Buffer) {
-    let title = if state.editor.original_index.is_some() {
-        " Edit Agent "
-    } else {
-        " Create Agent "
-    };
-    Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .style(Style::default().fg(Color::Yellow))
-        .render(area, buf);
-
-    let inner = Rect {
-        x: area.x + 1,
-        y: area.y + 1,
-        width: area.width.saturating_sub(2),
-        height: area.height.saturating_sub(2),
-    };
-
     let editor = &state.editor;
     let selected_style = Style::default()
-        .fg(Color::Black)
-        .bg(Color::Yellow)
+        .fg(Color::White)
+        .bg(CLAURST_ACCENT)
         .add_modifier(Modifier::BOLD);
-    let normal_style = Style::default().fg(Color::White);
+    let normal_style = Style::default().fg(CLAURST_TEXT);
 
     let field_style = |field: AgentEditorField| {
         if editor.selected_field == field {
@@ -770,8 +762,8 @@ fn render_agent_editor(state: &AgentsMenuState, area: Rect, buf: &mut Buffer) {
         ),
         Line::default(),
         Line::from(vec![Span::styled(
-            "Prompt",
-            Style::default().fg(Color::DarkGray),
+            " Prompt",
+            Style::default().fg(CLAURST_ACCENT).add_modifier(Modifier::BOLD),
         )]),
     ];
 
@@ -804,13 +796,9 @@ fn render_agent_editor(state: &AgentsMenuState, area: Rect, buf: &mut Buffer) {
         )]));
     }
 
-    lines.push(Line::default());
-    lines.push(Line::from(vec![Span::styled(
-        "Tab/Up/Down move • Enter adds newline for text fields • Ctrl+S save • Esc back",
-        Style::default().fg(Color::DarkGray),
-    )]));
-
-    Paragraph::new(lines).render(inner, buf);
+    Paragraph::new(lines)
+        .style(Style::default().bg(CLAURST_PANEL_BG))
+        .render(area, buf);
 }
 
 fn render_editor_field(label: &str, value: &str, value_style: Style) -> Line<'static> {
@@ -821,11 +809,36 @@ fn render_editor_field(label: &str, value: &str, value_style: Style) -> Line<'st
     };
     Line::from(vec![
         Span::styled(
-            format!("{label:<11}"),
-            Style::default().fg(Color::DarkGray),
+            format!(" {label:<10} "),
+            Style::default().fg(CLAURST_MUTED),
         ),
         Span::styled(display, value_style),
     ])
+}
+
+fn agent_list_row(title: String, meta: String, selected: bool, width: u16) -> Line<'static> {
+    let bg = if selected { CLAURST_ACCENT } else { CLAURST_PANEL_BG };
+    let title_style = if selected {
+        Style::default().fg(Color::White).bg(bg).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(CLAURST_TEXT).bg(bg)
+    };
+    let meta_style = if selected {
+        Style::default().fg(Color::Rgb(248, 220, 236)).bg(bg)
+    } else {
+        Style::default().fg(CLAURST_MUTED).bg(bg)
+    };
+    let mut spans = vec![
+        Span::styled(" ", Style::default().bg(bg)),
+        Span::styled(title, title_style),
+        Span::styled(format!("  {}", meta), meta_style),
+    ];
+    let used: usize = spans.iter().map(|span| span.content.len()).sum();
+    let pad = width.saturating_sub(used as u16) as usize;
+    if pad > 0 {
+        spans.push(Span::styled(" ".repeat(pad), Style::default().bg(bg)));
+    }
+    Line::from(spans)
 }
 
 // ---------------------------------------------------------------------------

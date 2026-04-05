@@ -121,6 +121,8 @@ pub const NON_REBINDABLE: &[&str] = &["ctrl+c", "ctrl+d", "ctrl+m"];
 ///
 /// # Standard Keybindings (Phase 1 Implementation)
 /// - **Ctrl+L**: Clear current input line (like bash) [Chat context only due to conflict]
+/// - **Ctrl+A**: Open the model picker
+/// - **Ctrl+K**: Open the command palette
 /// - **Ctrl+U**: Kill input from cursor to start of line (Emacs-style)
 /// - **Alt+←/Alt+→**: Navigate to previous/next message in transcript
 /// - **Ctrl+. (Ctrl+>)**: Jump to next error/issue in messages
@@ -155,11 +157,11 @@ pub fn default_bindings() -> Vec<ParsedBinding> {
         ("home", "goLineStart", KeyContext::Chat),
         ("end", "goLineEnd", KeyContext::Chat),
 
-        // Text Editing (Emacs-style)
-        ("ctrl+a", "goLineStart", KeyContext::Chat),
+        // Text Editing (Emacs-style) + app shortcuts
+        ("ctrl+a", "openModelPicker", KeyContext::Chat),
         ("ctrl+e", "goLineEnd", KeyContext::Chat),
         ("ctrl+h", "deleteCharBefore", KeyContext::Chat),
-        ("ctrl+k", "killToEnd", KeyContext::Chat),
+        ("ctrl+k", "openCommandPalette", KeyContext::Chat),
         ("ctrl+u", "killToStart", KeyContext::Chat),
         ("ctrl+w", "killWord", KeyContext::Chat),
         ("alt+d", "deleteWord", KeyContext::Chat),
@@ -541,6 +543,30 @@ mod tests {
         });
         assert!(ctrl_c.is_some());
         assert_eq!(ctrl_c.unwrap().action.as_deref(), Some("interrupt"));
+    }
+
+    #[test]
+    fn test_default_bindings_map_ctrl_a_and_ctrl_k_to_app_shortcuts() {
+        let bindings = default_bindings();
+
+        let ctrl_a = bindings.iter().find(|b| {
+            b.chord.len() == 1
+                && b.chord[0].ctrl
+                && b.chord[0].key == "a"
+                && b.context == KeyContext::Chat
+        });
+        let ctrl_k = bindings.iter().find(|b| {
+            b.chord.len() == 1
+                && b.chord[0].ctrl
+                && b.chord[0].key == "k"
+                && b.context == KeyContext::Chat
+        });
+
+        assert_eq!(ctrl_a.and_then(|b| b.action.as_deref()), Some("openModelPicker"));
+        assert_eq!(
+            ctrl_k.and_then(|b| b.action.as_deref()),
+            Some("openCommandPalette")
+        );
     }
 
     #[test]

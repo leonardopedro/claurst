@@ -6,8 +6,13 @@
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 use ratatui::Frame;
+
+use crate::overlays::{
+    begin_modal_frame, modal_header_line_area, render_modal_title_frame, CLAURST_ACCENT,
+    CLAURST_MUTED, CLAURST_PANEL_BG, CLAURST_TEXT,
+};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -53,15 +58,23 @@ impl ThemeScreen {
     }
 
     pub fn select_prev(&mut self) {
-        if self.selected_idx > 0 {
+        let count = self.themes.len();
+        if count == 0 {
+            return;
+        }
+        if self.selected_idx == 0 {
+            self.selected_idx = count - 1;
+        } else {
             self.selected_idx -= 1;
         }
     }
 
     pub fn select_next(&mut self) {
-        if self.selected_idx + 1 < self.themes.len() {
-            self.selected_idx += 1;
+        let count = self.themes.len();
+        if count == 0 {
+            return;
         }
+        self.selected_idx = (self.selected_idx + 1) % count;
     }
 
     /// Return the name of the currently selected theme.
@@ -178,35 +191,26 @@ pub fn render_theme_screen(frame: &mut Frame, screen: &ThemeScreen, area: Rect) 
         return;
     }
 
-    let dialog_width = 64u16.min(area.width.saturating_sub(4));
-    let rows = (screen.themes.len() as u16 + 2).min(area.height.saturating_sub(4));
-    let dialog_height = (rows + 6).min(area.height.saturating_sub(4));
-    let dialog_area = crate::overlays::centered_rect(dialog_width, dialog_height, area);
-
-    frame.render_widget(Clear, dialog_area);
+    let rows = (screen.themes.len() as u16 + 2).min(area.height.saturating_sub(6));
+    let layout = begin_modal_frame(frame, area, 70, rows + 6, 2, 1);
+    render_modal_title_frame(frame, layout.header_area, "Choose a theme", "esc");
+    if let Some(subtitle_area) = modal_header_line_area(layout.header_area, 1) {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![Span::styled(
+                " Preview palettes before wiring up richer theme behavior.",
+                Style::default().fg(CLAURST_MUTED),
+            )])),
+            subtitle_area,
+        );
+    }
 
     let mut lines: Vec<Line> = Vec::new();
 
-    lines.push(Line::from(vec![Span::styled(
-        "  Select a theme:",
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    )]));
-    lines.push(Line::from(""));
-
     for (i, theme) in screen.themes.iter().enumerate() {
         let is_selected = i == screen.selected_idx;
-
-        let prefix = if is_selected { "  \u{25BA} " } else { "    " };
-
-        let name_style = if is_selected {
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::White)
-        };
+        let bg = if is_selected { CLAURST_ACCENT } else { CLAURST_PANEL_BG };
+        let fg = if is_selected { Color::White } else { CLAURST_TEXT };
+        let desc_fg = if is_selected { Color::Rgb(248, 220, 236) } else { CLAURST_MUTED };
 
         // Build the swatch using block characters with background colour
         let swatch_spans: Vec<Span> = theme
@@ -216,36 +220,37 @@ pub fn render_theme_screen(frame: &mut Frame, screen: &ThemeScreen, area: Rect) 
             .collect();
 
         let mut row_spans: Vec<Span> = Vec::new();
-        row_spans.push(Span::raw(prefix));
+        row_spans.push(Span::styled(" ", Style::default().bg(bg)));
         row_spans.extend(swatch_spans);
-        row_spans.push(Span::raw("  "));
+        row_spans.push(Span::styled("  ", Style::default().bg(bg)));
         row_spans.push(Span::styled(
             format!("{:<12}", theme.label),
-            name_style,
+            Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
         ));
         row_spans.push(Span::styled(
             theme.description.clone(),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(desc_fg).bg(bg),
         ));
+        let used: usize = row_spans.iter().map(|span| span.content.len()).sum();
+        let pad = layout.body_area.width.saturating_sub(used as u16) as usize;
+        if pad > 0 {
+            row_spans.push(Span::styled(" ".repeat(pad), Style::default().bg(bg)));
+        }
 
         lines.push(Line::from(row_spans));
+        lines.push(Line::from(""));
     }
-
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![Span::styled(
-        "  \u{2191}\u{2193} navigate  \u{00b7}  Enter to select  \u{00b7}  Esc to cancel",
-        Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::ITALIC),
-    )]));
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Theme Picker ")
-        .border_style(Style::default().fg(Color::Cyan));
-
-    let para = Paragraph::new(lines).block(block);
-    frame.render_widget(para, dialog_area);
+    frame.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(CLAURST_PANEL_BG)),
+        layout.body_area,
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![Span::styled(
+            " ↑↓ navigate  ·  enter apply  ·  esc cancel",
+            Style::default().fg(CLAURST_MUTED).add_modifier(Modifier::ITALIC),
+        )])),
+        layout.footer_area,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -283,5 +288,45 @@ pub fn handle_theme_key(
             None
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    #[test]
+    fn theme_screen_renders_current_theme() {
+        let mut screen = ThemeScreen::new();
+        screen.open("dark");
+
+        let backend = TestBackend::new(90, 28);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_theme_screen(frame, &screen, frame.area()))
+            .unwrap();
+
+        let rendered = terminal.backend().buffer();
+        let content = rendered
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(content.contains("Choose a theme"));
+        assert!(content.contains("Dark"));
+    }
+
+    #[test]
+    fn theme_navigation_wraps() {
+        let mut screen = ThemeScreen::new();
+        screen.open("default");
+
+        screen.select_prev();
+        assert_eq!(screen.selected_name(), Some("deuteranopia"));
+
+        screen.select_next();
+        assert_eq!(screen.selected_name(), Some("default"));
     }
 }

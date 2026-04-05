@@ -92,18 +92,26 @@ impl SessionBranchingState {
         self.create_input.clear();
     }
 
-    /// Move selection up one row (clamped at 0).
+    /// Move selection up one row, wrapping to the end.
     pub fn select_prev(&mut self) {
-        if self.selected_idx > 0 {
+        let count = self.branches.len();
+        if count == 0 {
+            return;
+        }
+        if self.selected_idx == 0 {
+            self.selected_idx = count - 1;
+        } else {
             self.selected_idx -= 1;
         }
     }
 
-    /// Move selection down one row (clamped at last entry).
+    /// Move selection down one row, wrapping to the start.
     pub fn select_next(&mut self) {
-        if !self.branches.is_empty() && self.selected_idx + 1 < self.branches.len() {
-            self.selected_idx += 1;
+        let count = self.branches.len();
+        if count == 0 {
+            return;
         }
+        self.selected_idx = (self.selected_idx + 1) % count;
     }
 
     /// Get a reference to the currently selected branch, if any.

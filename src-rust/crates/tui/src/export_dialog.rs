@@ -5,10 +5,13 @@
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::overlays::centered_rect;
+use crate::overlays::{
+    begin_modal_frame, modal_header_line_area, render_modal_title_frame, CLAURST_ACCENT, CLAURST_MUTED,
+    CLAURST_PANEL_BG, CLAURST_TEXT,
+};
 
 // ---------------------------------------------------------------------------
 // State
@@ -58,62 +61,81 @@ pub fn render_export_dialog(frame: &mut Frame, state: &ExportDialogState, area: 
         return;
     }
 
-    let dialog_width = 58u16.min(area.width.saturating_sub(4));
-    let dialog_height = 12u16.min(area.height.saturating_sub(4));
-    let dialog_area = centered_rect(dialog_width, dialog_height, area);
-
-    frame.render_widget(Clear, dialog_area);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(Line::from(vec![Span::styled(
-            " Export Conversation ",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-        )]))
-        .border_style(Style::default().fg(Color::Cyan));
-
-    let inner = block.inner(dialog_area);
-    frame.render_widget(block, dialog_area);
-
-    let json_style = if state.selected == ExportFormat::Json {
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::REVERSED)
-    } else {
-        Style::default().fg(Color::White)
-    };
-    let md_style = if state.selected == ExportFormat::Markdown {
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::REVERSED)
-    } else {
-        Style::default().fg(Color::White)
-    };
+    let layout = begin_modal_frame(frame, area, 62, 14, 2, 1);
+    render_modal_title_frame(frame, layout.header_area, "Export conversation", "esc");
+    if let Some(subtitle_area) = modal_header_line_area(layout.header_area, 1) {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![Span::styled(
+                " Choose a format to export this session.",
+                Style::default().fg(CLAURST_MUTED),
+            )])),
+            subtitle_area,
+        );
+    }
 
     let lines: Vec<Line<'static>> = vec![
         Line::from(""),
-        Line::from(vec![Span::styled(
-            "  Choose export format:",
-            Style::default().fg(Color::Yellow),
-        )]),
+        export_option_row(
+            "1",
+            "JSON",
+            "Structured export for tooling and replay",
+            state.selected == ExportFormat::Json,
+            layout.body_area.width,
+        ),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("  [1] ", Style::default().fg(Color::DarkGray)),
-            Span::styled("JSON        ", json_style),
-            Span::styled("  [2] ", Style::default().fg(Color::DarkGray)),
-            Span::styled("Markdown", md_style),
-        ]),
+        export_option_row(
+            "2",
+            "Markdown",
+            "Readable transcript for docs and sharing",
+            state.selected == ExportFormat::Markdown,
+            layout.body_area.width,
+        ),
         Line::from(""),
         Line::from(vec![Span::styled(
-            "  Saved to: ./claude-export-<timestamp>.<ext>",
-            Style::default().fg(Color::DarkGray),
-        )]),
-        Line::from(""),
-        Line::from(vec![Span::styled(
-            "  Tab/\u{2190}\u{2192} to switch  \u{b7}  Enter to export  \u{b7}  Esc to cancel",
-            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+            " Saved to ./claude-export-<timestamp>.<ext>",
+            Style::default().fg(CLAURST_MUTED),
         )]),
     ];
 
-    Paragraph::new(lines)
-        .wrap(Wrap { trim: false })
-        .render(inner, frame.buffer_mut());
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .style(Style::default().bg(CLAURST_PANEL_BG)),
+        layout.body_area,
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![Span::styled(
+            " tab/←/→ switch  ·  enter export  ·  1/2 choose",
+            Style::default().fg(CLAURST_MUTED).add_modifier(Modifier::ITALIC),
+        )])),
+        layout.footer_area,
+    );
+}
+
+fn export_option_row(
+    key: &str,
+    label: &str,
+    description: &str,
+    selected: bool,
+    width: u16,
+) -> Line<'static> {
+    let bg = if selected { CLAURST_ACCENT } else { CLAURST_PANEL_BG };
+    let fg = if selected { Color::White } else { CLAURST_TEXT };
+    let desc_fg = if selected { Color::Rgb(245, 220, 232) } else { CLAURST_MUTED };
+    let mut spans = vec![
+        Span::styled(format!(" [{}] ", key), Style::default().fg(desc_fg).bg(bg)),
+        Span::styled(label.to_string(), Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!("  {}", description),
+            Style::default().fg(desc_fg).bg(bg),
+        ),
+    ];
+    let used: usize = spans.iter().map(|span| span.content.len()).sum();
+    let pad = width.saturating_sub(used as u16) as usize;
+    if pad > 0 {
+        spans.push(Span::styled(" ".repeat(pad), Style::default().bg(bg)));
+    }
+    Line::from(spans)
 }
 
 // ---------------------------------------------------------------------------

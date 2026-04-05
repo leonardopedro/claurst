@@ -13,9 +13,12 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Widget, Wrap};
 
-use crate::overlays::centered_rect;
+use crate::overlays::{
+    begin_modal_buf, modal_header_line_area, render_modal_title_buf, CLAURST_ACCENT,
+    CLAURST_MUTED, CLAURST_PANEL_BG, CLAURST_TEXT,
+};
 
 // ---------------------------------------------------------------------------
 // Data model
@@ -181,21 +184,33 @@ impl HooksConfigMenuState {
     }
 
     pub fn select_prev(&mut self) {
-        if self.selected > 0 {
+        let count = match self.mode {
+            HooksMenuMode::SelectEvent => self.events.len(),
+            HooksMenuMode::SelectMatcher => self.matchers_for_event().len(),
+            HooksMenuMode::SelectHook => self.hooks_for_selection().len(),
+            HooksMenuMode::ViewHook => 0,
+        };
+        if count == 0 {
+            return;
+        }
+        if self.selected == 0 {
+            self.selected = count - 1;
+        } else {
             self.selected -= 1;
         }
     }
 
     pub fn select_next(&mut self) {
-        let max = match self.mode {
+        let count = match self.mode {
             HooksMenuMode::SelectEvent   => self.events.len(),
             HooksMenuMode::SelectMatcher => self.matchers_for_event().len(),
             HooksMenuMode::SelectHook    => self.hooks_for_selection().len(),
             HooksMenuMode::ViewHook      => 0,
         };
-        if max > 0 && self.selected + 1 < max {
-            self.selected += 1;
+        if count == 0 {
+            return;
         }
+        self.selected = (self.selected + 1) % count;
     }
 
     pub fn scroll_up(&mut self) {
@@ -332,10 +347,8 @@ pub fn render_hooks_config_menu(
 ) {
     if !state.visible { return; }
 
-    let dialog_width  = 80u16.min(area.width.saturating_sub(4));
-    let dialog_height = 28u16.min(area.height.saturating_sub(4));
-    let dialog_area   = centered_rect(dialog_width, dialog_height, area);
-    let inner_h       = dialog_height.saturating_sub(2) as usize;
+    let layout = begin_modal_buf(buf, area, 80, 28, 2, 1);
+    let inner_h = layout.body_area.height as usize;
 
     let (title, lines) = match state.mode {
         HooksMenuMode::SelectEvent   => render_event_list(state),
@@ -343,24 +356,48 @@ pub fn render_hooks_config_menu(
         HooksMenuMode::SelectHook    => render_hook_list(state),
         HooksMenuMode::ViewHook      => render_hook_detail(state),
     };
+    render_modal_title_buf(buf, layout.header_area, title.trim(), "esc");
+    let breadcrumb = match state.mode {
+        HooksMenuMode::SelectEvent => " Review configured hook events and matchers.".to_string(),
+        HooksMenuMode::SelectMatcher => format!(
+            " Event: {}",
+            state.selected_event.as_deref().unwrap_or("?")
+        ),
+        HooksMenuMode::SelectHook => format!(
+            " {} / {}",
+            state.selected_event.as_deref().unwrap_or("?"),
+            state.selected_matcher.as_deref().unwrap_or("?")
+        ),
+        HooksMenuMode::ViewHook => " Hook details are read-only for now.".to_string(),
+    };
+    if let Some(subtitle_area) = modal_header_line_area(layout.header_area, 1) {
+        Paragraph::new(Line::from(vec![Span::styled(
+            breadcrumb,
+            Style::default().fg(CLAURST_MUTED),
+        )]))
+        .render(subtitle_area, buf);
+    }
 
     let total = lines.len();
     let max_scroll = total.saturating_sub(inner_h);
     let scroll = state.scroll_offset.min(max_scroll) as u16;
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(title)
-        .border_style(Style::default().fg(Color::Cyan));
-
-    let para = Paragraph::new(lines)
-        .block(block)
+    Paragraph::new(lines)
         .alignment(Alignment::Left)
         .wrap(Wrap { trim: false })
-        .scroll((scroll, 0));
-
-    use ratatui::widgets::Widget;
-    para.render(dialog_area, buf);
+        .scroll((scroll, 0))
+        .style(Style::default().bg(CLAURST_PANEL_BG))
+        .render(layout.body_area, buf);
+    let footer = match state.mode {
+        HooksMenuMode::SelectEvent => " enter drill  ·  esc close",
+        HooksMenuMode::SelectMatcher => " enter drill  ·  esc back",
+        HooksMenuMode::SelectHook => " enter view  ·  esc back",
+        HooksMenuMode::ViewHook => " esc back",
+    };
+    Paragraph::new(Line::from(vec![Span::styled(
+        footer,
+        Style::default().fg(CLAURST_MUTED).add_modifier(Modifier::ITALIC),
+    )]))
+    .render(layout.footer_area, buf);
 }
 
 // ---- Screen 1: event list -------------------------------------------------
@@ -386,8 +423,6 @@ fn render_event_list(state: &HooksConfigMenuState) -> (&'static str, Vec<Line<'s
         }
     }
 
-    lines.push(Line::from(""));
-    push_hint(&mut lines, "\u{21b5}=drill  Esc=close");
     (" Hooks — Select Event ", lines)
 }
 
@@ -411,8 +446,6 @@ fn render_matcher_list(state: &HooksConfigMenuState) -> (&'static str, Vec<Line<
         push_list_row(&mut lines, matcher, &format!("{count} hook{}", if count == 1 { "" } else { "s" }), selected);
     }
 
-    lines.push(Line::from(""));
-    push_hint(&mut lines, "\u{21b5}=drill  Esc=back");
     (" Hooks — Select Matcher ", lines)
 }
 
@@ -439,8 +472,6 @@ fn render_hook_list(state: &HooksConfigMenuState) -> (&'static str, Vec<Line<'st
         push_list_row(&mut lines, &hook.summary(), &badge, selected);
     }
 
-    lines.push(Line::from(""));
-    push_hint(&mut lines, "\u{21b5}=view  Esc=back");
     (" Hooks — Select Hook ", lines)
 }
 
@@ -480,24 +511,27 @@ fn render_hook_detail(state: &HooksConfigMenuState) -> (&'static str, Vec<Line<'
         "  Edit ~/.claurst/settings.json to modify hooks.",
         Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
     )]));
-    lines.push(Line::from(""));
-    push_hint(&mut lines, "Esc=back");
     (" Hook Detail ", lines)
 }
 
 // ---- Line helpers ----------------------------------------------------------
 
 fn push_list_row(lines: &mut Vec<Line<'static>>, label: &str, badge: &str, selected: bool) {
-    let arrow = if selected { "\u{203a} " } else { "  " };
+    let bg = if selected { CLAURST_ACCENT } else { CLAURST_PANEL_BG };
     let row_style = if selected {
-        Style::default().fg(Color::Rgb(233, 30, 99)).add_modifier(Modifier::BOLD)
+        Style::default().fg(Color::White).bg(bg).add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::White)
+        Style::default().fg(CLAURST_TEXT).bg(bg)
+    };
+    let badge_style = if selected {
+        Style::default().fg(Color::Rgb(248, 220, 236)).bg(bg)
+    } else {
+        Style::default().fg(CLAURST_MUTED).bg(bg)
     };
     lines.push(Line::from(vec![
-        Span::styled(format!("  {arrow}"), row_style),
-        Span::styled(format!("{:<32}", label), row_style),
-        Span::styled(badge.to_string(), Style::default().fg(Color::DarkGray)),
+        Span::styled(" ", Style::default().bg(bg)),
+        Span::styled(format!("{:<42}", label), row_style),
+        Span::styled(badge.to_string(), badge_style),
     ]));
 }
 
@@ -508,9 +542,35 @@ fn push_detail_row(lines: &mut Vec<Line<'static>>, key: &str, value: &str) {
     ]));
 }
 
-fn push_hint(lines: &mut Vec<Line<'static>>, hints: &str) {
-    lines.push(Line::from(vec![Span::styled(
-        format!("  {hints}"),
-        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
-    )]));
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::layout::Rect;
+
+    #[test]
+    fn hooks_menu_renders_opaque_event_list() {
+        let mut state = HooksConfigMenuState::new();
+        state.visible = true;
+        state.hooks = vec![HookEntry {
+            event: "PreToolUse".to_string(),
+            matcher: "Bash".to_string(),
+            hook_type: "command".to_string(),
+            target: "echo hi".to_string(),
+        }];
+        state.build_events();
+
+        let area = Rect { x: 0, y: 0, width: 90, height: 28 };
+        let mut buf = Buffer::empty(area);
+        render_hooks_config_menu(&state, area, &mut buf);
+
+        let rendered = buf
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(rendered.contains("Hooks"));
+        assert!(rendered.contains("PreToolUse"));
+    }
 }
+

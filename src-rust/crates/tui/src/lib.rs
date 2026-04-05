@@ -773,7 +773,7 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<Vec<_>>()
             .join("");
-        assert!(rendered.contains("No turn changes available yet."));
+        assert!(rendered.contains("No changes were captured for this turn."));
     }
 
     #[test]

@@ -8,7 +8,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::overlays::centered_rect;
+use crate::overlays::{centered_rect, modal_search_line, CLAURST_PANEL_BG};
 
 // ---------------------------------------------------------------------------
 // Effort level
@@ -103,6 +103,10 @@ pub fn model_supports_max_effort(id: &str) -> bool {
 
 /// The model ID that fast-mode locks to.
 pub const FAST_MODE_MODEL: &str = "claude-haiku-4-5";
+
+pub fn is_fast_mode_model(id: &str) -> bool {
+    id == FAST_MODE_MODEL || id.starts_with("claude-haiku-4-5")
+}
 
 /// Returns a short description string based on the model family inferred from
 /// the model ID.  Used when converting API model entries to `ModelEntry`.
@@ -419,6 +423,7 @@ pub struct ModelPickerState {
     pub visible: bool,
     pub selected_idx: usize,
     pub models: Vec<ModelEntry>,
+    pub title: String,
     /// Live filter typed by the user.
     pub filter: String,
     /// Current effort level for models that support extended thinking.
@@ -442,6 +447,7 @@ impl ModelPickerState {
             visible: false,
             selected_idx: 0,
             models: Self::default_models(),
+            title: "Select model".to_string(),
             filter: String::new(),
             effort_level: EffortLevel::Normal,
             fast_mode: false,
@@ -461,6 +467,16 @@ impl ModelPickerState {
 
     /// Open the overlay with full state context.
     pub fn open_with_state(&mut self, current_model: &str, effort: EffortLevel, fast_mode: bool) {
+        self.open_with_title("Select model", current_model, effort, fast_mode);
+    }
+
+    pub fn open_with_title(
+        &mut self,
+        title: impl Into<String>,
+        current_model: &str,
+        effort: EffortLevel,
+        fast_mode: bool,
+    ) {
         for m in &mut self.models {
             m.is_current = m.id == current_model;
         }
@@ -469,6 +485,7 @@ impl ModelPickerState {
             .iter()
             .position(|m| m.is_current)
             .unwrap_or(0);
+        self.title = title.into();
         self.filter.clear();
         self.effort_level = effort;
         self.fast_mode = fast_mode;
@@ -497,6 +514,15 @@ impl ModelPickerState {
         let count = self.filtered_models().len();
         if count == 0 { return; }
         self.selected_idx = (self.selected_idx + 1) % count;
+    }
+
+    pub fn select_first(&mut self) {
+        self.selected_idx = 0;
+    }
+
+    pub fn select_last(&mut self) {
+        let count = self.filtered_models().len();
+        self.selected_idx = count.saturating_sub(1);
     }
 
     /// Cycle effort level forward (→ key).
@@ -709,9 +735,12 @@ pub fn render_model_picker(state: &ModelPickerState, area: Rect, buf: &mut Buffe
         return;
     }
 
+    use ratatui::prelude::Stylize;
+    use ratatui::widgets::Widget;
+
     let _pink = Color::Rgb(233, 30, 99);
     let dim = Color::Rgb(90, 90, 90);
-    let dialog_bg = Color::Rgb(30, 30, 35);
+    let dialog_bg = CLAURST_PANEL_BG;
     let highlight_bg = Color::Rgb(233, 30, 99);
     let highlight_fg = Color::White;
 
@@ -750,57 +779,79 @@ pub fn render_model_picker(state: &ModelPickerState, area: Rect, buf: &mut Buffe
         height: dialog_area.height.saturating_sub(2),
     };
 
-    // ── Build lines ──
-    let mut lines: Vec<Line> = Vec::new();
+    let footer_height = 1u16.min(inner.height);
+    let header_height = 3u16.min(inner.height.saturating_sub(footer_height));
+    let header_area = Rect {
+        x: inner.x,
+        y: inner.y,
+        width: inner.width,
+        height: header_height,
+    };
+    let body_area = Rect {
+        x: inner.x,
+        y: inner.y.saturating_add(header_height),
+        width: inner.width,
+        height: inner.height.saturating_sub(header_height + footer_height),
+    };
+    let footer_area = Rect {
+        x: inner.x,
+        y: inner.y + inner.height.saturating_sub(footer_height),
+        width: inner.width,
+        height: footer_height,
+    };
 
-    // Title row: "Select a model" left, "esc" right
-    let title = "Select a model";
-    let title_pad = inner.width.saturating_sub(title.len() as u16 + 5) as usize;
-    lines.push(Line::from(vec![
-        Span::styled(format!(" {}", title), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+    // ── Fixed header ──
+    let mut header_lines: Vec<Line> = Vec::new();
+
+    // Title row: "Select model" left, "esc" right
+    let title_pad = inner.width.saturating_sub(state.title.len() as u16 + 5) as usize;
+    header_lines.push(Line::from(vec![
+        Span::styled(format!(" {}", state.title), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         Span::styled(format!("{:>w$}", "esc ", w = title_pad), Style::default().fg(dim)),
     ]));
 
     // Search field
-    lines.push(Line::from(""));
-    if state.filter.is_empty() {
-        lines.push(Line::from(vec![
-            Span::styled(" S", Style::default().fg(dim).add_modifier(Modifier::UNDERLINED)),
-            Span::styled("earch", Style::default().fg(dim)),
-        ]));
-    } else {
-        lines.push(Line::from(vec![
-            Span::styled(format!(" {}", state.filter), Style::default().fg(Color::White)),
-        ]));
-    }
+    header_lines.push(Line::from(""));
+    header_lines.push(modal_search_line(&state.filter, "Search", dim, Color::White));
 
-    // Fast-mode notice
-    if state.fast_mode {
-        lines.push(Line::from(vec![
-            Span::styled(format!(" \u{26a1} Fast mode ON ({})", FAST_MODE_MODEL), Style::default().fg(Color::Yellow)),
-        ]));
-    }
+    let header_para = Paragraph::new(header_lines).bg(dialog_bg);
+    header_para.render(header_area, buf);
 
-    // Loading notice
-    if state.loading_models {
-        lines.push(Line::from(vec![
-            Span::styled(" Loading models\u{2026}", Style::default().fg(dim)),
-        ]));
+    if body_area.height == 0 {
+        return;
     }
 
     // ── Model items ──
+    let mut lines: Vec<Line> = Vec::new();
     let mut selected_line_idx: u16 = 0;
-    let current_line_start = lines.len() as u16;
+
+    if state.fast_mode {
+        lines.push(Line::from(vec![Span::styled(
+            format!(" \u{26a1} Fast mode ON ({})", FAST_MODE_MODEL),
+            Style::default().fg(Color::Yellow),
+        )]));
+    }
+
+    if state.loading_models {
+        lines.push(Line::from(vec![Span::styled(
+            " Loading models\u{2026}",
+            Style::default().fg(dim),
+        )]));
+    }
+
+    if !lines.is_empty() {
+        lines.push(Line::from(""));
+    }
 
     if filtered.is_empty() {
-        lines.push(Line::from(vec![Span::styled(" No matches", Style::default().fg(dim))]));
+        lines.push(Line::from(vec![Span::styled(" No results found", Style::default().fg(dim))]));
     } else {
         for (i, model) in filtered.iter().enumerate() {
             let is_selected = i == state.selected_idx;
             let supports_effort = model_supports_effort(&model.id);
 
             if is_selected {
-                selected_line_idx = (lines.len() as u16).saturating_sub(current_line_start);
+                selected_line_idx = lines.len() as u16;
             }
 
             let (fg, bg) = if is_selected {
@@ -852,21 +903,34 @@ pub fn render_model_picker(state: &ModelPickerState, area: Rect, buf: &mut Buffe
 
     // ── Scroll ──
     let total_lines = lines.len() as u16;
-    let visible = inner.height;
-    let abs_selected = current_line_start + selected_line_idx;
+    let visible = body_area.height;
     let scroll_y = if total_lines <= visible {
         0u16
-    } else if abs_selected + 3 >= visible {
-        (abs_selected + 3).saturating_sub(visible)
+    } else if selected_line_idx + 3 >= visible {
+        (selected_line_idx + 3).saturating_sub(visible)
     } else {
         0
     };
 
-    use ratatui::prelude::Stylize;
     let para = Paragraph::new(lines).bg(dialog_bg).scroll((scroll_y, 0));
 
-    use ratatui::widgets::Widget;
-    para.render(inner, buf);
+    para.render(body_area, buf);
+
+    let mut footer_spans = vec![
+        Span::styled(" enter", Style::default().fg(dim)),
+        Span::styled(" select", Style::default().fg(dim)),
+    ];
+    if let Some(model) = filtered.get(state.selected_idx) {
+        if model_supports_effort(&model.id) {
+            footer_spans.push(Span::raw("  "));
+            footer_spans.push(Span::styled("\u{2190}/\u{2192}", Style::default().fg(dim)));
+            footer_spans.push(Span::styled(" effort", Style::default().fg(dim)));
+        }
+    }
+    footer_spans.push(Span::raw("  "));
+    footer_spans.push(Span::styled(" /connect", Style::default().fg(Color::Rgb(233, 30, 99))));
+    footer_spans.push(Span::styled(" providers", Style::default().fg(dim)));
+    Paragraph::new(Line::from(footer_spans)).bg(dialog_bg).render(footer_area, buf);
 }
 
 // ---------------------------------------------------------------------------
@@ -902,6 +966,19 @@ mod tests {
         let current_count = p.models.iter().filter(|m| m.is_current).count();
         assert_eq!(current_count, 1);
         assert!(p.models.iter().find(|m| m.id == "claude-sonnet-4-6").unwrap().is_current);
+    }
+
+    #[test]
+    fn open_with_title_updates_dialog_title() {
+        let mut p = ModelPickerState::new();
+        p.open_with_title("Anthropic", "claude-sonnet-4-6", EffortLevel::Normal, false);
+        assert_eq!(p.title, "Anthropic");
+    }
+
+    #[test]
+    fn fast_mode_aliases_include_dated_haiku() {
+        assert!(is_fast_mode_model("claude-haiku-4-5"));
+        assert!(is_fast_mode_model("claude-haiku-4-5-20251001"));
     }
 
     // 3. open() with an unknown model ID marks none as current and sets idx=0.

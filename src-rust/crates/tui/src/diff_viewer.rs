@@ -11,13 +11,18 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Widget},
+    widgets::{Paragraph, Widget},
 };
 use similar::{ChangeTag, TextDiff};
 use std::collections::HashMap;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
+
+use crate::overlays::{
+    begin_modal_buf, modal_header_line_area, render_modal_title_buf, CLAURST_ACCENT,
+    CLAURST_MUTED, CLAURST_PANEL_BG, CLAURST_TEXT,
+};
 
 static SYNTAX_SET: Lazy<SyntaxSet> = Lazy::new(SyntaxSet::load_defaults_newlines);
 static THEME_SET: Lazy<ThemeSet> = Lazy::new(ThemeSet::load_defaults);
@@ -158,17 +163,25 @@ impl DiffViewerState {
     }
 
     pub fn select_prev(&mut self) {
-        if self.selected_file > 0 {
-            self.selected_file -= 1;
-            self.detail_scroll = 0;
+        let count = self.files.len();
+        if count == 0 {
+            return;
         }
+        if self.selected_file == 0 {
+            self.selected_file = count - 1;
+        } else {
+            self.selected_file -= 1;
+        }
+        self.detail_scroll = 0;
     }
 
     pub fn select_next(&mut self) {
-        if self.selected_file + 1 < self.files.len() {
-            self.selected_file += 1;
-            self.detail_scroll = 0;
+        let count = self.files.len();
+        if count == 0 {
+            return;
         }
+        self.selected_file = (self.selected_file + 1) % count;
+        self.detail_scroll = 0;
     }
 
     pub fn switch_pane(&mut self) {
@@ -530,83 +543,97 @@ pub fn render_diff_dialog(state: &mut DiffViewerState, area: Rect, buf: &mut Buf
         return;
     }
 
-    // Center the dialog (80% width, 80% height)
-    let dialog_width = (area.width * 4 / 5).max(40).min(area.width);
-    let dialog_height = (area.height * 4 / 5).max(10).min(area.height);
-    let x = area.x + (area.width - dialog_width) / 2;
-    let y = area.y + (area.height - dialog_height) / 2;
-    let dialog_area = Rect { x, y, width: dialog_width, height: dialog_height };
-
-    // Clear the area
-    Clear.render(dialog_area, buf);
-
-    // Outer border
+    let layout = begin_modal_buf(buf, area, 98, 32, 2, 1);
     let title = match state.diff_type {
-        DiffType::GitDiff => " Diff (git) [Space: collapse, d: toggle, Tab: pane, Esc: close] ",
-        DiffType::TurnDiff => " Diff (turn) [Space: collapse, d: toggle, Tab: pane, Esc: close] ",
+        DiffType::GitDiff => "Review changes",
+        DiffType::TurnDiff => "Changes from this turn",
     };
-    Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .style(Style::default().fg(Color::White))
-        .render(dialog_area, buf);
-
-    let inner = Rect {
-        x: dialog_area.x + 1,
-        y: dialog_area.y + 1,
-        width: dialog_area.width.saturating_sub(2),
-        height: dialog_area.height.saturating_sub(2),
-    };
+    render_modal_title_buf(buf, layout.header_area, title, "esc");
+    let total_added: u32 = state.files.iter().map(|file| file.added).sum();
+    let total_removed: u32 = state.files.iter().map(|file| file.removed).sum();
+    if let Some(subtitle_area) = modal_header_line_area(layout.header_area, 1) {
+        Paragraph::new(Line::from(vec![Span::styled(
+            format!(
+                " {} files  ·  +{} -{}  ·  {} mode",
+                state.files.len(),
+                total_added,
+                total_removed,
+                match state.diff_type {
+                    DiffType::GitDiff => "git diff",
+                    DiffType::TurnDiff => "turn diff",
+                }
+            ),
+            Style::default().fg(CLAURST_MUTED),
+        )]))
+        .render(subtitle_area, buf);
+    }
 
     if state.files.is_empty() {
         let empty = match state.diff_type {
-            DiffType::GitDiff => "No git changes available.",
-            DiffType::TurnDiff => "No turn changes available yet.",
+            DiffType::GitDiff => " No git changes available.",
+            DiffType::TurnDiff => " No changes were captured for this turn.",
         };
         Paragraph::new(vec![
             Line::from(""),
             Line::from(vec![Span::styled(
                 empty,
-                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                Style::default().fg(CLAURST_TEXT).add_modifier(Modifier::ITALIC),
             )]),
             Line::from(""),
             Line::from(vec![Span::styled(
-                "No tracked file changes were captured for the selected turn.",
-                Style::default().fg(Color::DarkGray),
+                " Use /review for the current git diff, or make an edit and reopen /changes.",
+                Style::default().fg(CLAURST_MUTED),
             )]),
         ])
-        .render(inner, buf);
+        .render(layout.body_area, buf);
         return;
     }
 
-    // Split: file list 30%, detail 70%
     let panes = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
-        .split(inner);
+        .constraints([Constraint::Percentage(31), Constraint::Length(1), Constraint::Min(1)])
+        .split(layout.body_area);
+
+    let divider: Vec<Line<'static>> = (0..layout.body_area.height)
+        .map(|_| Line::from(Span::styled("│", Style::default().fg(CLAURST_MUTED))))
+        .collect();
+    Paragraph::new(divider).render(panes[1], buf);
 
     render_file_list(state, panes[0], buf);
-    render_diff_detail(state, panes[1], buf);
+    render_diff_detail(state, panes[2], buf);
+    Paragraph::new(Line::from(vec![Span::styled(
+        " tab switch pane  ·  ↑↓ navigate  ·  space collapse  ·  d toggle scope",
+        Style::default().fg(CLAURST_MUTED).add_modifier(Modifier::ITALIC),
+    )]))
+    .render(layout.footer_area, buf);
 }
 
 fn render_file_list(state: &DiffViewerState, area: Rect, buf: &mut Buffer) {
     let focused = state.active_pane == DiffPane::FileList;
-    let border_style = if focused {
-        Style::default().fg(Color::Cyan)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
-    Block::default()
-        .title(" Files ")
-        .borders(Borders::ALL)
-        .border_style(border_style)
-        .render(area, buf);
+    if area.height == 0 {
+        return;
+    }
+    let header = Line::from(vec![
+        Span::styled(
+            " Files",
+            Style::default()
+                .fg(if focused { CLAURST_ACCENT } else { CLAURST_TEXT })
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  {}", state.files.len()),
+            Style::default().fg(CLAURST_MUTED),
+        ),
+    ]);
+    Paragraph::new(header)
+        .style(Style::default().bg(CLAURST_PANEL_BG))
+        .render(Rect { x: area.x, y: area.y, width: area.width, height: 1 }, buf);
 
     let inner = Rect {
-        x: area.x + 1,
+        x: area.x,
         y: area.y + 1,
-        width: area.width.saturating_sub(2),
-        height: area.height.saturating_sub(2),
+        width: area.width,
+        height: area.height.saturating_sub(1),
     };
 
     let max_visible = inner.height as usize;
@@ -628,102 +655,82 @@ fn render_file_list(state: &DiffViewerState, area: Rect, buf: &mut Buffer) {
         let is_collapsed = *state.collapsed.get(abs_idx).unwrap_or(&false);
         let collapse_char = if is_collapsed { "\u{25b8}" } else { "\u{25be}" }; // ▸ / ▾
         let (stats, stats_color) = if file.binary {
-            ("[binary]".to_string(), Color::DarkGray)
+            ("binary".to_string(), CLAURST_MUTED)
         } else if file.is_new_file {
-            (format!("[new] +{}", file.added), Color::Yellow)
+            (format!("new  +{}", file.added), Color::Yellow)
         } else {
-            (format!("+{} -{}", file.added, file.removed), Color::DarkGray)
+            (format!("+{} -{}", file.added, file.removed), CLAURST_MUTED)
         };
 
+        let bg = if selected { CLAURST_ACCENT } else { CLAURST_PANEL_BG };
         let base_style = if selected {
-            Style::default().add_modifier(Modifier::BOLD)
-        } else {
             Style::default()
+                .add_modifier(Modifier::BOLD)
+                .fg(Color::White)
+                .bg(bg)
+        } else {
+            Style::default().fg(CLAURST_TEXT).bg(bg)
         };
 
-        // Render prefix + path
         let y = inner.y + i as u16;
         if y >= area.y + area.height { break; }
 
-        let collapse_style = if is_collapsed {
-            Style::default().fg(Color::DarkGray)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
+        let stats_text = format!(" {}", stats);
+        let prefix = format!(" {} {}", collapse_char, path);
+        let used = prefix.len() + stats_text.len();
+        let pad = inner.width.saturating_sub(used as u16) as usize;
         let line = Line::from(vec![
+            Span::styled(prefix, base_style),
+            Span::styled(" ".repeat(pad), Style::default().bg(bg)),
             Span::styled(
-                if selected { "> " } else { "  " },
-                base_style,
+                stats_text,
+                Style::default()
+                    .fg(if selected { Color::Rgb(248, 220, 236) } else { stats_color })
+                    .bg(bg),
             ),
-            Span::styled(
-                format!("{} ", collapse_char),
-                collapse_style,
-            ),
-            Span::styled(path, base_style.fg(if selected { Color::White } else { Color::Gray })),
         ]);
         let row_area = Rect { x: inner.x, y, width: inner.width, height: 1 };
         Paragraph::new(line).render(row_area, buf);
-
-        // Stats on the right side
-        let stats_x = inner.x + inner.width.saturating_sub(stats.len() as u16 + 1);
-        if stats_x > inner.x {
-            let stats_area = Rect { x: stats_x, y, width: stats.len() as u16, height: 1 };
-            Paragraph::new(Line::from(vec![
-                Span::styled(stats, Style::default().fg(stats_color)),
-            ])).render(stats_area, buf);
-        }
-    }
-
-    // Pagination indicators
-    if start > 0 {
-        let ind_area = Rect { x: inner.x, y: inner.y, width: inner.width, height: 1 };
-        Paragraph::new(format!("↑ {} more", start))
-            .style(Style::default().fg(Color::DarkGray))
-            .render(ind_area, buf);
-    }
-    if end < state.files.len() {
-        let remaining = state.files.len() - end;
-        let y = inner.y + inner.height.saturating_sub(1);
-        let ind_area = Rect { x: inner.x, y, width: inner.width, height: 1 };
-        Paragraph::new(format!("↓ {} more", remaining))
-            .style(Style::default().fg(Color::DarkGray))
-            .render(ind_area, buf);
     }
 }
 
 fn render_diff_detail(state: &DiffViewerState, area: Rect, buf: &mut Buffer) {
     let focused = state.active_pane == DiffPane::Detail;
-    let border_style = if focused {
-        Style::default().fg(Color::Cyan)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
 
     let file = match state.files.get(state.selected_file) {
         Some(f) => f,
         None => return,
     };
 
-    let title = format!(" {} ", file.path);
-    Block::default()
-        .title(title.as_str())
-        .borders(Borders::ALL)
-        .border_style(border_style)
-        .render(area, buf);
+    let header = Line::from(vec![
+        Span::styled(
+            format!(" {}", file.path),
+            Style::default()
+                .fg(if focused { CLAURST_ACCENT } else { CLAURST_TEXT })
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  +{} -{}", file.added, file.removed),
+            Style::default().fg(CLAURST_MUTED),
+        ),
+    ]);
+    Paragraph::new(header)
+        .style(Style::default().bg(CLAURST_PANEL_BG))
+        .render(Rect { x: area.x, y: area.y, width: area.width, height: 1 }, buf);
 
     let inner = Rect {
-        x: area.x + 1,
+        x: area.x,
         y: area.y + 1,
-        width: area.width.saturating_sub(2),
-        height: area.height.saturating_sub(2),
+        width: area.width,
+        height: area.height.saturating_sub(1),
     };
 
     if *state.collapsed.get(state.selected_file).unwrap_or(&false) {
         Paragraph::new(vec![
             Line::from(""),
             Line::from(vec![Span::styled(
-                "  [collapsed]  press Space to expand",
-                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                " [collapsed]  press Space to expand",
+                Style::default().fg(CLAURST_MUTED).add_modifier(Modifier::ITALIC),
             )]),
         ])
         .render(inner, buf);
@@ -732,7 +739,7 @@ fn render_diff_detail(state: &DiffViewerState, area: Rect, buf: &mut Buffer) {
 
     if file.binary {
         Paragraph::new("Binary file — no diff available")
-            .style(Style::default().fg(Color::DarkGray))
+            .style(Style::default().fg(CLAURST_MUTED))
             .render(inner, buf);
         return;
     }
@@ -785,7 +792,7 @@ fn render_diff_detail(state: &DiffViewerState, area: Rect, buf: &mut Buffer) {
             let cell_area = Rect { x: bar_x, y, width: 1, height: 1 };
             Paragraph::new(Line::from(Span::styled(
                 ch.to_string(),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(CLAURST_MUTED),
             ))).render(cell_area, buf);
         }
     }
@@ -837,8 +844,11 @@ fn build_inline_diff_spans(old: &str, new: &str) -> (Vec<Span<'static>>, Vec<Spa
         let s: String = change.to_string();
         match change.tag() {
             ChangeTag::Equal => {
-                old_spans.push(Span::styled(s.clone(), Style::default().fg(Color::Red)));
-                new_spans.push(Span::styled(s, Style::default().fg(Color::Green)));
+                old_spans.push(Span::styled(
+                    s.clone(),
+                    Style::default().fg(CLAURST_TEXT),
+                ));
+                new_spans.push(Span::styled(s, Style::default().fg(CLAURST_TEXT)));
             }
             ChangeTag::Delete => {
                 old_spans.push(Span::styled(

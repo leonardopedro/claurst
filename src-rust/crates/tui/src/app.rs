@@ -6,14 +6,14 @@ use crate::dialog_select::{DialogSelectState, SelectItem};
 use crate::export_dialog::{ExportDialogState, ExportFormat};
 use crate::dialogs::PermissionRequest;
 use crate::diff_viewer::{DiffViewerState, build_turn_diff};
-use crate::model_picker::{EffortLevel, ModelPickerState, FAST_MODE_MODEL};
+use crate::model_picker::{EffortLevel, ModelPickerState, is_fast_mode_model};
 use crate::session_browser::SessionBrowserState;
 use crate::tasks_overlay::TasksOverlay;
 use crate::dialogs::McpApprovalDialogState;
 use crate::mcp_view::{McpServerView, McpToolView, McpViewState, McpViewStatus};
 use crate::notifications::{NotificationKind, NotificationQueue};
 use crate::overlays::{
-    GlobalSearchState, HelpOverlay, HistorySearchOverlay, MessageSelectorOverlay,
+    GlobalSearchState, HelpEntry, HelpOverlay, HistorySearchOverlay, MessageSelectorOverlay,
     RewindFlowOverlay, SelectorMessage,
 };
 use crate::plugin_views::PluginHintBanner;
@@ -92,6 +92,34 @@ const PROMPT_SLASH_COMMANDS: &[(&str, &str)] = &[
     ("voice", "Toggle voice input mode"),
 ];
 
+fn help_command_category(name: &str) -> &'static str {
+    match name {
+        "connect" | "model" | "providers" | "fast" | "effort" | "voice" => "Model & Provider",
+        "changes" | "diff" | "review" | "rewind" | "export" | "copy" => "Review & History",
+        "stats" | "cost" | "context" | "insights" | "heapdump" | "doctor" => "Diagnostics",
+        "config" | "settings" | "theme" | "privacy" | "keybindings" | "hooks" | "mcp" => {
+            "Workspace"
+        }
+        "agent" | "agents" | "memory" | "plugin" | "feedback" | "survey" => "Tools",
+        "session" | "resume" | "rename" | "fork" | "clear" | "compact" | "quit" | "exit" => {
+            "Session"
+        }
+        _ => "Commands",
+    }
+}
+
+fn help_overlay_entries() -> Vec<HelpEntry> {
+    PROMPT_SLASH_COMMANDS
+        .iter()
+        .map(|(name, description)| HelpEntry {
+            name: (*name).to_string(),
+            aliases: String::new(),
+            description: (*description).to_string(),
+            category: help_command_category(name).to_string(),
+        })
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Provider connection helpers
 // ---------------------------------------------------------------------------
@@ -169,6 +197,55 @@ fn get_url_for_provider(id: &str) -> &'static str {
         "venice" => "venice.ai/settings/api",
         _ => "the provider's website",
     }
+}
+
+fn provider_picker_items() -> Vec<SelectItem> {
+    vec![
+        SelectItem { id: "openai".into(), title: "OpenAI".into(), description: "(ChatGPT Plus/Pro or API key)".into(), category: "Popular".into(), badge: None },
+        SelectItem { id: "github-copilot".into(), title: "GitHub Copilot".into(), description: "(GitHub subscription or token)".into(), category: "Popular".into(), badge: None },
+        SelectItem { id: "google".into(), title: "Google".into(), description: "(API key)".into(), category: "Popular".into(), badge: None },
+        SelectItem { id: "anthropic".into(), title: "Anthropic".into(), description: "(API key)".into(), category: "Popular".into(), badge: None },
+        SelectItem { id: "openrouter".into(), title: "OpenRouter".into(), description: "100+ models with one key".into(), category: "Popular".into(), badge: None },
+        SelectItem { id: "vercel".into(), title: "Vercel AI Gateway".into(), description: "Gateway for AI SDK models".into(), category: "Popular".into(), badge: None },
+        SelectItem { id: "groq".into(), title: "Groq".into(), description: "Fast hosted inference".into(), category: "Popular".into(), badge: Some("FREE".into()) },
+        SelectItem { id: "ollama".into(), title: "Ollama".into(), description: "Run models locally".into(), category: "Popular".into(), badge: Some("LOCAL".into()) },
+        SelectItem { id: "cerebras".into(), title: "Cerebras".into(), description: "Fast hosted inference".into(), category: "Other".into(), badge: Some("FREE".into()) },
+        SelectItem { id: "sambanova".into(), title: "SambaNova".into(), description: "Fast hosted inference".into(), category: "Other".into(), badge: Some("FREE".into()) },
+        SelectItem { id: "lmstudio".into(), title: "LM Studio".into(), description: "Local model server".into(), category: "Other".into(), badge: Some("LOCAL".into()) },
+        SelectItem { id: "llamacpp".into(), title: "llama.cpp".into(), description: "Local inference server".into(), category: "Other".into(), badge: Some("LOCAL".into()) },
+        SelectItem { id: "deepseek".into(), title: "DeepSeek".into(), description: "Reasoning and coding models".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "mistral".into(), title: "Mistral".into(), description: "Hosted Mistral models".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "togetherai".into(), title: "Together AI".into(), description: "Open model hosting".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "perplexity".into(), title: "Perplexity".into(), description: "Search-augmented models".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "cohere".into(), title: "Cohere".into(), description: "Command models".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "xai".into(), title: "xAI".into(), description: "Grok models".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "deepinfra".into(), title: "DeepInfra".into(), description: "Hosted open models".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "azure".into(), title: "Azure OpenAI".into(), description: "Enterprise OpenAI deployments".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "amazon-bedrock".into(), title: "AWS Bedrock".into(), description: "Enterprise foundation models".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "google-vertex".into(), title: "Google Vertex AI".into(), description: "Enterprise Google models".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "sap-ai-core".into(), title: "SAP AI Core".into(), description: "Enterprise AI platform".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "gitlab".into(), title: "GitLab Duo".into(), description: "AI in GitLab".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "cloudflare-ai-gateway".into(), title: "Cloudflare AI Gateway".into(), description: "Gateway for multiple providers".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "cloudflare-workers-ai".into(), title: "Cloudflare Workers AI".into(), description: "Edge AI inference".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "helicone".into(), title: "Helicone".into(), description: "AI gateway and observability".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "huggingface".into(), title: "Hugging Face".into(), description: "Hosted community models".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "nvidia".into(), title: "NVIDIA".into(), description: "Hosted NVIDIA models".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "alibaba".into(), title: "Alibaba".into(), description: "Qwen and hosted models".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "venice".into(), title: "Venice AI".into(), description: "Privacy-first AI".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "moonshotai".into(), title: "Moonshot AI".into(), description: "Hosted Moonshot models".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "zhipuai".into(), title: "Zhipu AI".into(), description: "Hosted GLM models".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "siliconflow".into(), title: "SiliconFlow".into(), description: "Hosted open models".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "nebius".into(), title: "Nebius".into(), description: "Cloud inference".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "novita".into(), title: "Novita".into(), description: "Cloud inference".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "ovhcloud".into(), title: "OVHcloud".into(), description: "EU-hosted AI".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "scaleway".into(), title: "Scaleway".into(), description: "EU cloud AI".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "vultr".into(), title: "Vultr".into(), description: "Cloud inference".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "baseten".into(), title: "Baseten".into(), description: "Model serving".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "friendli".into(), title: "Friendli".into(), description: "Serverless inference".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "upstage".into(), title: "Upstage".into(), description: "Hosted Upstage models".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "stepfun".into(), title: "StepFun".into(), description: "Hosted reasoning models".into(), category: "Other".into(), badge: None },
+        SelectItem { id: "fireworks".into(), title: "Fireworks AI".into(), description: "Fast inference".into(), category: "Other".into(), badge: None },
+    ]
 }
 
 // ---------------------------------------------------------------------------
@@ -855,7 +932,11 @@ impl App {
             last_turn_elapsed: None,
             last_turn_verb: None,
             transcript_version: Cell::new(0),
-            help_overlay: HelpOverlay::new(),
+            help_overlay: {
+                let mut overlay = HelpOverlay::new();
+                overlay.populate_from_commands(help_overlay_entries());
+                overlay
+            },
             history_search_overlay: HistorySearchOverlay::new(),
             global_search: GlobalSearchState::default(),
             message_selector: MessageSelectorOverlay::new(),
@@ -914,62 +995,7 @@ impl App {
             },
             model_picker_fetch_pending: false,
             auth_store: claurst_core::AuthStore::load(),
-            connect_dialog: {
-                let items = vec![
-                    // -- RECOMMENDED --
-                    SelectItem { id: "anthropic".into(), title: "Anthropic".into(), description: "".into(), category: "Recommended".into(), badge: None },
-                    SelectItem { id: "openai".into(), title: "OpenAI".into(), description: "".into(), category: "Recommended".into(), badge: None },
-                    SelectItem { id: "google".into(), title: "Google".into(), description: "".into(), category: "Recommended".into(), badge: None },
-                    SelectItem { id: "github-copilot".into(), title: "GitHub Copilot".into(), description: "".into(), category: "Recommended".into(), badge: None },
-                    // -- FAST & FREE --
-                    SelectItem { id: "groq".into(), title: "Groq".into(), description: "".into(), category: "Fast & Free".into(), badge: Some("FREE".into()) },
-                    SelectItem { id: "cerebras".into(), title: "Cerebras".into(), description: "".into(), category: "Fast & Free".into(), badge: Some("FREE".into()) },
-                    SelectItem { id: "sambanova".into(), title: "SambaNova".into(), description: "".into(), category: "Fast & Free".into(), badge: Some("FREE".into()) },
-                    // -- LOCAL (no key needed) --
-                    SelectItem { id: "ollama".into(), title: "Ollama".into(), description: "Run models locally".into(), category: "Local".into(), badge: Some("LOCAL".into()) },
-                    SelectItem { id: "lmstudio".into(), title: "LM Studio".into(), description: "Local model server".into(), category: "Local".into(), badge: Some("LOCAL".into()) },
-                    SelectItem { id: "llamacpp".into(), title: "llama.cpp".into(), description: "C++ inference server".into(), category: "Local".into(), badge: Some("LOCAL".into()) },
-                    // -- AFFORDABLE --
-                    SelectItem { id: "deepseek".into(), title: "DeepSeek".into(), description: "".into(), category: "Affordable".into(), badge: None },
-                    SelectItem { id: "mistral".into(), title: "Mistral".into(), description: "".into(), category: "Affordable".into(), badge: None },
-                    SelectItem { id: "openrouter".into(), title: "OpenRouter".into(), description: "100+ models \u{00b7} One key".into(), category: "Aggregator".into(), badge: None },
-                    SelectItem { id: "togetherai".into(), title: "Together AI".into(), description: "".into(), category: "Affordable".into(), badge: None },
-                    SelectItem { id: "perplexity".into(), title: "Perplexity".into(), description: "Search-augmented AI".into(), category: "Affordable".into(), badge: None },
-                    SelectItem { id: "cohere".into(), title: "Cohere".into(), description: "".into(), category: "Affordable".into(), badge: None },
-                    SelectItem { id: "xai".into(), title: "xAI".into(), description: "".into(), category: "Affordable".into(), badge: None },
-                    SelectItem { id: "deepinfra".into(), title: "DeepInfra".into(), description: "".into(), category: "Affordable".into(), badge: None },
-                    // -- ENTERPRISE --
-                    SelectItem { id: "azure".into(), title: "Azure OpenAI".into(), description: "".into(), category: "Enterprise".into(), badge: None },
-                    SelectItem { id: "amazon-bedrock".into(), title: "AWS Bedrock".into(), description: "".into(), category: "Enterprise".into(), badge: None },
-                    SelectItem { id: "google-vertex".into(), title: "Google Vertex AI".into(), description: "".into(), category: "Enterprise".into(), badge: None },
-                    SelectItem { id: "sap-ai-core".into(), title: "SAP AI Core".into(), description: "Enterprise AI platform".into(), category: "Enterprise".into(), badge: None },
-                    SelectItem { id: "gitlab".into(), title: "GitLab Duo".into(), description: "AI in GitLab".into(), category: "Enterprise".into(), badge: None },
-                    // -- CLOUD / GATEWAY --
-                    SelectItem { id: "cloudflare-ai-gateway".into(), title: "Cloudflare AI Gateway".into(), description: "".into(), category: "Gateway".into(), badge: None },
-                    SelectItem { id: "cloudflare-workers-ai".into(), title: "Cloudflare Workers AI".into(), description: "Edge AI inference".into(), category: "Gateway".into(), badge: None },
-                    SelectItem { id: "vercel".into(), title: "Vercel AI Gateway".into(), description: "AI SDK gateway".into(), category: "Gateway".into(), badge: None },
-                    SelectItem { id: "helicone".into(), title: "Helicone".into(), description: "AI observability gateway".into(), category: "Gateway".into(), badge: None },
-                    // -- MORE PROVIDERS --
-                    SelectItem { id: "huggingface".into(), title: "Hugging Face".into(), description: "".into(), category: "More Providers".into(), badge: None },
-                    SelectItem { id: "nvidia".into(), title: "Nvidia".into(), description: "".into(), category: "More Providers".into(), badge: None },
-                    SelectItem { id: "alibaba".into(), title: "".into(), description: "".into(), category: "More Providers".into(), badge: None },
-                    SelectItem { id: "venice".into(), title: "Venice AI".into(), description: "Privacy-first AI".into(), category: "More Providers".into(), badge: None },
-                    SelectItem { id: "moonshotai".into(), title: "".into(), description: "".into(), category: "More Providers".into(), badge: None },
-                    SelectItem { id: "zhipuai".into(), title: "".into(), description: "".into(), category: "More Providers".into(), badge: None },
-                    SelectItem { id: "siliconflow".into(), title: "SiliconFlow".into(), description: "".into(), category: "More Providers".into(), badge: None },
-                    SelectItem { id: "nebius".into(), title: "Nebius".into(), description: "".into(), category: "More Providers".into(), badge: None },
-                    SelectItem { id: "novita".into(), title: "Novita".into(), description: "".into(), category: "More Providers".into(), badge: None },
-                    SelectItem { id: "ovhcloud".into(), title: "OVHcloud".into(), description: "EU-hosted AI".into(), category: "More Providers".into(), badge: None },
-                    SelectItem { id: "scaleway".into(), title: "Scaleway".into(), description: "EU cloud AI".into(), category: "More Providers".into(), badge: None },
-                    SelectItem { id: "vultr".into(), title: "Vultr".into(), description: "Cloud inference".into(), category: "More Providers".into(), badge: None },
-                    SelectItem { id: "baseten".into(), title: "Baseten".into(), description: "Model serving".into(), category: "More Providers".into(), badge: None },
-                    SelectItem { id: "friendli".into(), title: "Friendli".into(), description: "Serverless inference".into(), category: "More Providers".into(), badge: None },
-                    SelectItem { id: "upstage".into(), title: "Upstage".into(), description: "".into(), category: "More Providers".into(), badge: None },
-                    SelectItem { id: "stepfun".into(), title: "StepFun".into(), description: "".into(), category: "More Providers".into(), badge: None },
-                    SelectItem { id: "fireworks".into(), title: "Fireworks AI".into(), description: "Fast inference".into(), category: "More Providers".into(), badge: None },
-                ];
-                DialogSelectState::new("Connect a Provider", items)
-            },
+            connect_dialog: DialogSelectState::new("Connect a provider", provider_picker_items()),
             command_palette: {
                 let items: Vec<SelectItem> = PROMPT_SLASH_COMMANDS
                     .iter()
@@ -1082,6 +1108,54 @@ impl App {
         } else {
             crate::model_picker::default_model_for_provider(provider_id)
         }
+    }
+
+    fn open_model_picker_for_provider(&mut self, provider_id: &str, title: Option<String>) {
+        let cache_path = dirs::cache_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("claurst")
+            .join("models.json");
+        if cache_path.exists() {
+            self.model_registry.load_cache(&cache_path);
+        }
+
+        let models = crate::model_picker::models_for_provider_from_registry(
+            provider_id,
+            &self.model_registry,
+        );
+        self.model_picker.set_models(models);
+        self.model_picker_fetch_pending = true;
+
+        let provider_prefix = format!("{}/", provider_id);
+        let current_model = if self.config.provider.as_deref() == Some(provider_id) {
+            self.model_name
+                .strip_prefix(&provider_prefix)
+                .unwrap_or(self.model_name.as_str())
+                .to_string()
+        } else {
+            let default_model = self.display_default_model_for_provider(provider_id);
+            default_model
+                .strip_prefix(&provider_prefix)
+                .unwrap_or(default_model.as_str())
+                .to_string()
+        };
+
+        self.model_picker.open_with_title(
+            title.unwrap_or_else(|| "Select model".to_string()),
+            &current_model,
+            self.effort_level,
+            self.fast_mode,
+        );
+    }
+
+    fn activate_provider(&mut self, provider_id: String, provider_name: String, status_prefix: &str) {
+        let picker_title = provider_name.clone();
+        self.fast_mode = false;
+        self.set_provider_default(provider_id.clone());
+        self.persist_provider_and_model();
+        self.has_credentials = true;
+        self.status_message = Some(format!("{} {}.", status_prefix, provider_name));
+        self.open_model_picker_for_provider(&provider_id, Some(picker_title));
     }
 
     fn persist_provider_and_model(&self) {
@@ -1244,37 +1318,17 @@ impl App {
                 true
             }
             "model" => {
-                let provider = self.config.provider.as_deref().unwrap_or("anthropic");
-
-                // Reload cache from disk in case the background models.dev fetch
-                // has written new data since we last opened the picker.
-                let cache_path = dirs::cache_dir()
-                    .unwrap_or_else(|| std::path::PathBuf::from("."))
-                    .join("claurst")
-                    .join("models.json");
-                if cache_path.exists() {
-                    self.model_registry.load_cache(&cache_path);
+                if !self.has_credentials {
+                    self.connect_dialog.open();
+                    self.status_message = Some("Connect a provider to choose a model.".to_string());
+                    return true;
                 }
-
-                // Get models from the registry (models.dev data); falls back to
-                // hardcoded when the registry has no data for this provider.
-                let models = crate::model_picker::models_for_provider_from_registry(
-                    provider,
-                    &self.model_registry,
-                );
-                self.model_picker.set_models(models);
-                self.model_picker_fetch_pending = true;
-
-                let provider_prefix = format!("{}/", provider);
-                let current = self
-                    .model_name
-                    .strip_prefix(&provider_prefix)
-                    .unwrap_or(self.model_name.as_str())
-                    .to_string();
-                let effort = self.effort_level;
-                let fast = self.fast_mode;
-                self.model_picker.open_with_state(&current, effort, fast);
-
+                let provider = self
+                    .config
+                    .provider
+                    .clone()
+                    .unwrap_or_else(|| "anthropic".to_string());
+                self.open_model_picker_for_provider(&provider, None);
                 true
             }
             "session" | "resume" => {
@@ -2071,6 +2125,7 @@ impl App {
             match key.code {
                 KeyCode::Esc => {
                     self.device_auth_dialog.close();
+                    self.device_auth_pending = None;
                 }
                 _ if matches!(self.device_auth_dialog.status, crate::device_auth_dialog::DeviceAuthStatus::Success(_)) => {
                     // Any key after success -> store credential and close
@@ -2091,19 +2146,16 @@ impl App {
                             &provider_id,
                             credential,
                         );
-                        self.set_provider_default(provider_id.clone());
-                        self.persist_provider_and_model();
-                        self.has_credentials = true;
-                        self.status_message = Some(format!(
-                            "Connected to {}! Use /model to pick a model.",
-                            provider_name
-                        ));
+                        self.device_auth_pending = None;
+                        self.device_auth_dialog.close();
+                        self.activate_provider(provider_id, provider_name, "Connected to");
+                        return false;
                     }
-                    self.device_auth_dialog.close();
                 }
                 _ if matches!(self.device_auth_dialog.status, crate::device_auth_dialog::DeviceAuthStatus::Error(_)) => {
                     // Any key after error -> close
                     self.device_auth_dialog.close();
+                    self.device_auth_pending = None;
                 }
                 _ => {} // Ignore other keys while waiting
             }
@@ -2117,21 +2169,15 @@ impl App {
                     self.key_input_dialog.close();
                 }
                 KeyCode::Enter => {
-                    let api_key = self.key_input_dialog.take_key();
                     let provider_id = self.key_input_dialog.provider_id.clone();
                     let provider_name = self.key_input_dialog.provider_name.clone();
+                    let api_key = self.key_input_dialog.take_key();
                     if !api_key.is_empty() {
                         self.auth_store.set(
                             &provider_id,
                             claurst_core::StoredCredential::ApiKey { key: api_key },
                         );
-                        self.set_provider_default(provider_id.clone());
-                        self.persist_provider_and_model();
-                        self.has_credentials = true;
-                        self.status_message = Some(format!(
-                            "Connected to {}! Use /model to pick a model.",
-                            provider_name
-                        ));
+                        self.activate_provider(provider_id, provider_name, "Connected to");
                     }
                 }
                 KeyCode::Backspace => {
@@ -2149,10 +2195,14 @@ impl App {
         if self.connect_dialog.visible {
             match key.code {
                 KeyCode::Esc => { self.connect_dialog.close(); }
+                KeyCode::Home => { self.connect_dialog.move_home(); }
+                KeyCode::End => { self.connect_dialog.move_end(); }
                 KeyCode::Up => { self.connect_dialog.move_up(); }
                 KeyCode::Down => { self.connect_dialog.move_down(); }
                 KeyCode::PageUp => { self.connect_dialog.page_up(); }
                 KeyCode::PageDown => { self.connect_dialog.page_down(); }
+                KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => { self.connect_dialog.move_up(); }
+                KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => { self.connect_dialog.move_down(); }
                 KeyCode::Enter => {
                     if let Some(selected) = self.connect_dialog.selected().cloned() {
                         self.connect_dialog.close();
@@ -2160,28 +2210,22 @@ impl App {
                         match selected.id.as_str() {
                             // Local providers — activate immediately, no key needed
                             "ollama" | "lmstudio" | "llamacpp" => {
-                                self.set_provider_default(selected.id.clone());
-                                self.persist_provider_and_model();
-                                self.has_credentials = true;
-                                self.status_message = Some(format!(
-                                    "Switched to {}! Use /model to pick a model.",
-                                    selected.title
-                                ));
+                                self.activate_provider(selected.id.clone(), selected.title.clone(), "Switched to");
                             }
                             "anthropic" => {
                                 // Anthropic: use API key from console.anthropic.com
                                 // (OAuth requires a registered app which Claurst doesn't have)
-                                self.key_input_dialog.open("anthropic".into(), "Anthropic (API Key)".into());
+                                self.key_input_dialog.open(selected.id.clone(), selected.title.clone());
                             }
                             "github-copilot" => {
                                 // GitHub Copilot: device code flow with Claurst's registered OAuth app
-                                self.device_auth_dialog.open("github-copilot".into(), "GitHub Copilot".into());
+                                self.device_auth_dialog.open(selected.id.clone(), selected.title.clone());
                                 self.device_auth_pending = Some("github-copilot".to_string());
                             }
                             // AWS Bedrock — accept a bearer token via key input dialog
                             "amazon-bedrock" => {
                                 self.key_input_dialog
-                                    .open("amazon-bedrock".into(), "AWS Bedrock (Bearer Token)".into());
+                                    .open(selected.id.clone(), selected.title.clone());
                             }
                             // All other providers — open API key input dialog
                             _ => {
@@ -2202,10 +2246,14 @@ impl App {
         if self.command_palette.visible {
             match key.code {
                 KeyCode::Esc => { self.command_palette.close(); }
+                KeyCode::Home => { self.command_palette.move_home(); }
+                KeyCode::End => { self.command_palette.move_end(); }
                 KeyCode::Up => { self.command_palette.move_up(); }
                 KeyCode::Down => { self.command_palette.move_down(); }
                 KeyCode::PageUp => { self.command_palette.page_up(); }
                 KeyCode::PageDown => { self.command_palette.page_down(); }
+                KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => { self.command_palette.move_up(); }
+                KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => { self.command_palette.move_down(); }
                 KeyCode::Enter => {
                     if let Some(selected) = self.command_palette.selected().cloned() {
                         self.command_palette.close();
@@ -2236,15 +2284,19 @@ impl App {
         if self.model_picker.visible {
             match key.code {
                 KeyCode::Esc => self.model_picker.close(),
+                KeyCode::Home => self.model_picker.select_first(),
+                KeyCode::End => self.model_picker.select_last(),
                 KeyCode::Up => self.model_picker.select_prev(),
                 KeyCode::Down => self.model_picker.select_next(),
                 KeyCode::Left => self.model_picker.effort_prev(),
                 KeyCode::Right => self.model_picker.effort_next(),
+                KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => self.model_picker.select_prev(),
+                KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => self.model_picker.select_next(),
                 KeyCode::Enter => {
                     if let Some((model_id, effort)) = self.model_picker.confirm() {
                         // If user picked a model other than the fast-mode model
                         // while fast mode was active, turn fast mode off.
-                        if self.fast_mode && model_id != FAST_MODE_MODEL {
+                        if self.fast_mode && !is_fast_mode_model(&model_id) {
                             self.fast_mode = false;
                         }
                         if let Some(e) = effort {
@@ -2860,25 +2912,17 @@ impl App {
                 self.show_help = !self.show_help;
                 self.help_overlay.toggle();
             }
-            KeyCode::Char('?') if key.modifiers.is_empty() && !self.is_streaming => {
+            KeyCode::Char('?')
+                if !self.is_streaming
+                    && self.prompt_input.is_empty()
+                    && !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT)
+                    && !key.modifiers.contains(KeyModifiers::SUPER) =>
+            {
                 self.show_help = !self.show_help;
                 self.help_overlay.toggle();
             }
 
-            // ---- Ctrl+A: Open model picker ----
-            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) && !self.is_streaming => {
-                self.intercept_slash_command("model");
-            }
-
-            // ---- Ctrl+K: Command palette (or Emacs kill-line if input has text) ----
-            KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) && !self.is_streaming => {
-                if self.prompt_input.is_empty() {
-                    self.command_palette.open();
-                } else {
-                    self.prompt_input.kill_line();
-                    self.refresh_prompt_input();
-                }
-            }
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) && !self.is_streaming => {
                 self.prompt_input.kill_line_backward();
                 self.refresh_prompt_input();
@@ -3215,7 +3259,11 @@ impl App {
                 self.help_overlay.close();
                 self.show_help = false;
             }
-            KeyCode::Char('?') if key.modifiers.is_empty() => {
+            KeyCode::Char('?')
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT)
+                    && !key.modifiers.contains(KeyModifiers::SUPER) =>
+            {
                 self.help_overlay.close();
                 self.show_help = false;
             }
@@ -3256,17 +3304,22 @@ impl App {
             KeyCode::Up => {
                 self.history_search_overlay.select_prev();
                 if let Some(hs) = self.history_search.as_mut() {
-                    if hs.selected > 0 {
-                        hs.selected -= 1;
+                    let count = hs.matches.len();
+                    if count > 0 {
+                        if hs.selected == 0 {
+                            hs.selected = count - 1;
+                        } else {
+                            hs.selected -= 1;
+                        }
                     }
                 }
             }
             KeyCode::Down => {
                 self.history_search_overlay.select_next();
                 if let Some(hs) = self.history_search.as_mut() {
-                    let max = hs.matches.len().saturating_sub(1);
-                    if hs.selected < max {
-                        hs.selected += 1;
+                    let count = hs.matches.len();
+                    if count > 0 {
+                        hs.selected = (hs.selected + 1) % count;
                     }
                 }
             }
@@ -3428,6 +3481,34 @@ impl App {
                 }
                 false
             }
+            "goLineStart" => {
+                if !self.is_streaming {
+                    self.prompt_input.cursor = 0;
+                    self.sync_legacy_prompt_fields();
+                }
+                false
+            }
+            "goLineEnd" => {
+                if !self.is_streaming {
+                    self.prompt_input.cursor = self.prompt_input.text.len();
+                    self.sync_legacy_prompt_fields();
+                }
+                false
+            }
+            "killToStart" => {
+                if !self.is_streaming {
+                    self.prompt_input.kill_line_backward();
+                    self.refresh_prompt_input();
+                }
+                false
+            }
+            "killWord" => {
+                if !self.is_streaming {
+                    self.prompt_input.kill_word_backward();
+                    self.refresh_prompt_input();
+                }
+                false
+            }
             "scrollUp" => {
                 self.scroll_offset = self.scroll_offset.saturating_add(10);
                 self.auto_scroll = false;
@@ -3489,8 +3570,13 @@ impl App {
             }
             "prevResult" => {
                 if let Some(hs) = self.history_search.as_mut() {
-                    if hs.selected > 0 {
-                        hs.selected -= 1;
+                    let count = hs.matches.len();
+                    if count > 0 {
+                        if hs.selected == 0 {
+                            hs.selected = count - 1;
+                        } else {
+                            hs.selected -= 1;
+                        }
                     }
                 }
                 self.history_search_overlay.select_prev();
@@ -3498,9 +3584,9 @@ impl App {
             }
             "nextResult" => {
                 if let Some(hs) = self.history_search.as_mut() {
-                    let max = hs.matches.len().saturating_sub(1);
-                    if hs.selected < max {
-                        hs.selected += 1;
+                    let count = hs.matches.len();
+                    if count > 0 {
+                        hs.selected = (hs.selected + 1) % count;
                     }
                 }
                 self.history_search_overlay.select_next();
@@ -3509,9 +3595,11 @@ impl App {
             // ========== NEW KEYBINDING ACTIONS (Phase 1) ==========
             "clearLine" => {
                 // Ctrl+L: Clear the current input line (like bash Ctrl+L)
-                self.prompt_input.text.clear();
-                self.prompt_input.cursor = 0;
-                self.refresh_prompt_input();
+                if !self.is_streaming {
+                    self.prompt_input.text.clear();
+                    self.prompt_input.cursor = 0;
+                    self.refresh_prompt_input();
+                }
                 false
             }
             "deleteCharBefore" => {
@@ -3566,9 +3654,21 @@ impl App {
                 false
             }
             "openHelp" => {
-                // Ctrl+H: Open help (alternative to F1)
+                // Alt+H: Open help (alternative to F1)
                 self.show_help = !self.show_help;
                 self.help_overlay.toggle();
+                false
+            }
+            "openModelPicker" => {
+                if !self.is_streaming {
+                    self.intercept_slash_command("model");
+                }
+                false
+            }
+            "openCommandPalette" => {
+                if !self.is_streaming {
+                    self.command_palette.open();
+                }
                 false
             }
             "deleteWord" => {
@@ -3606,14 +3706,19 @@ impl App {
                 self.history_search_overlay.close();
             }
             KeyCode::Up => {
-                if hs.selected > 0 {
-                    hs.selected -= 1;
+                let count = hs.matches.len();
+                if count > 0 {
+                    if hs.selected == 0 {
+                        hs.selected = count - 1;
+                    } else {
+                        hs.selected -= 1;
+                    }
                 }
             }
             KeyCode::Down => {
-                let max = hs.matches.len().saturating_sub(1);
-                if hs.selected < max {
-                    hs.selected += 1;
+                let count = hs.matches.len();
+                if count > 0 {
+                    hs.selected = (hs.selected + 1) % count;
                 }
             }
             KeyCode::Backspace => {
@@ -3810,12 +3915,20 @@ impl App {
     fn navigate_context_menu(&mut self, direction: KeyCode) {
         if let Some(mut menu) = self.context_menu_state {
             let item_count = Self::context_menu_items(menu.kind).len();
+            if item_count == 0 {
+                self.context_menu_state = Some(menu);
+                return;
+            }
             match direction {
                 KeyCode::Up => {
-                    menu.selected_index = menu.selected_index.saturating_sub(1);
+                    if menu.selected_index == 0 {
+                        menu.selected_index = item_count - 1;
+                    } else {
+                        menu.selected_index -= 1;
+                    }
                 }
                 KeyCode::Down => {
-                    menu.selected_index = (menu.selected_index + 1).min(item_count - 1);
+                    menu.selected_index = (menu.selected_index + 1) % item_count;
                 }
                 _ => return,
             }
@@ -4554,11 +4667,21 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 
     fn make_app() -> App {
         let config = Config::default();
         let cost_tracker = claurst_core::cost::CostTracker::new();
         App::new(config, cost_tracker)
+    }
+
+    fn press_key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
     }
 
     #[test]
@@ -4674,6 +4797,7 @@ mod tests {
         let mut app = make_app();
         assert!(!app.help_overlay.visible);
         assert!(!app.show_help);
+        assert!(!app.help_overlay.commands.is_empty());
         assert!(app.intercept_slash_command("help"));
         assert!(app.help_overlay.visible);
         assert!(app.show_help);
@@ -4688,6 +4812,65 @@ mod tests {
         // Second call while already open should leave it open (not toggle it off).
         assert!(app.intercept_slash_command("help"));
         assert!(app.help_overlay.visible);
+    }
+
+    #[test]
+    fn test_question_mark_shortcut_opens_help_with_shift_modifier() {
+        let mut app = make_app();
+
+        app.handle_key_event(press_key(KeyCode::Char('?'), KeyModifiers::SHIFT));
+
+        assert!(app.help_overlay.visible);
+        assert!(app.show_help);
+    }
+
+    #[test]
+    fn test_question_mark_shortcut_closes_help_with_shift_modifier() {
+        let mut app = make_app();
+        app.help_overlay.toggle();
+        app.show_help = true;
+
+        app.handle_key_event(press_key(KeyCode::Char('?'), KeyModifiers::SHIFT));
+
+        assert!(!app.help_overlay.visible);
+        assert!(!app.show_help);
+    }
+
+    #[test]
+    fn test_question_mark_shortcut_types_into_non_empty_prompt() {
+        let mut app = make_app();
+        app.prompt_input.text = "why".to_string();
+        app.prompt_input.cursor = app.prompt_input.text.len();
+        app.refresh_prompt_input();
+
+        app.handle_key_event(press_key(KeyCode::Char('?'), KeyModifiers::SHIFT));
+
+        assert!(!app.help_overlay.visible);
+        assert_eq!(app.prompt_input.text, "why?");
+    }
+
+    #[test]
+    fn test_ctrl_a_shortcut_opens_model_picker() {
+        let mut app = make_app();
+        app.has_credentials = true;
+        app.config.provider = Some("anthropic".to_string());
+
+        app.handle_key_event(press_key(KeyCode::Char('a'), KeyModifiers::CONTROL));
+
+        assert!(app.model_picker.visible);
+    }
+
+    #[test]
+    fn test_ctrl_k_shortcut_opens_command_palette_even_with_input() {
+        let mut app = make_app();
+        app.prompt_input.text = "hello".to_string();
+        app.prompt_input.cursor = app.prompt_input.text.len();
+        app.refresh_prompt_input();
+
+        app.handle_key_event(press_key(KeyCode::Char('k'), KeyModifiers::CONTROL));
+
+        assert!(app.command_palette.visible);
+        assert_eq!(app.prompt_input.text, "hello");
     }
 
     // ---- Bash prefix allowlist ----------------------------------------------

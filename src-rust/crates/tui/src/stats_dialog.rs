@@ -8,10 +8,15 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Widget},
+    widgets::{Paragraph, Widget},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use crate::overlays::{
+    begin_modal_buf, modal_header_line_area, render_modal_title_buf, CLAURST_ACCENT,
+    CLAURST_MUTED, CLAURST_PANEL_BG,
+};
 
 // ---------------------------------------------------------------------------
 // Data types
@@ -346,51 +351,27 @@ fn date_to_days_since_epoch(date: &str) -> Option<u64> {
 pub fn render_stats_dialog(state: &StatsDialogState, area: Rect, buf: &mut Buffer) {
     if !state.open { return; }
 
-    let w = (area.width * 4 / 5).max(40).min(area.width);
-    let h = (area.height * 4 / 5).max(15).min(area.height);
-    let x = area.x + (area.width - w) / 2;
-    let y = area.y + (area.height - h) / 2;
-    let dialog = Rect { x, y, width: w, height: h };
+    let layout = begin_modal_buf(buf, area, 92, 30, 2, 1);
+    render_modal_title_buf(buf, layout.header_area, "Cost & stats", "esc");
 
-    Clear.render(dialog, buf);
-    Block::default()
-        .title(" Stats [Tab: switch tabs, Esc: close] ")
-        .borders(Borders::ALL)
-        .style(Style::default().fg(Color::Cyan))
-        .render(dialog, buf);
-
-    let inner = Rect {
-        x: dialog.x + 1,
-        y: dialog.y + 1,
-        width: dialog.width.saturating_sub(2),
-        height: dialog.height.saturating_sub(2),
-    };
-
-    // Tab bar
     let tab_line = Line::from(vec![
         tab_span("Overview",      state.tab == StatsTab::Overview),
-        Span::styled(" | ", Style::default().fg(Color::DarkGray)),
+        Span::styled("  ·  ", Style::default().fg(CLAURST_MUTED)),
         tab_span("Daily Tokens",  state.tab == StatsTab::DailyTokens),
-        Span::styled(" | ", Style::default().fg(Color::DarkGray)),
+        Span::styled("  ·  ", Style::default().fg(CLAURST_MUTED)),
         tab_span("Cost Heatmap",  state.tab == StatsTab::CostHeatmap),
-        Span::styled(" | ", Style::default().fg(Color::DarkGray)),
+        Span::styled("  ·  ", Style::default().fg(CLAURST_MUTED)),
         tab_span("Models",        state.tab == StatsTab::Models),
     ]);
-    Paragraph::new(tab_line).render(
-        Rect { x: inner.x, y: inner.y, width: inner.width, height: 1 },
-        buf,
-    );
+    if let Some(tab_area) = modal_header_line_area(layout.header_area, 1) {
+        Paragraph::new(tab_line).render(tab_area, buf);
+    }
 
-    let content_area = Rect {
-        x: inner.x,
-        y: inner.y + 2,
-        width: inner.width,
-        height: inner.height.saturating_sub(2),
-    };
+    let content_area = layout.body_area;
 
     let Some(data) = &state.data else {
         Paragraph::new("Loading\u{2026}")
-            .style(Style::default().fg(Color::DarkGray))
+            .style(Style::default().fg(CLAURST_MUTED).bg(CLAURST_PANEL_BG))
             .render(content_area, buf);
         return;
     };
@@ -401,16 +382,23 @@ pub fn render_stats_dialog(state: &StatsDialogState, area: Rect, buf: &mut Buffe
         StatsTab::CostHeatmap => render_cost_heatmap(data, content_area, buf),
         StatsTab::Models      => render_models(state, content_area, buf),
     }
+    Paragraph::new(Line::from(vec![Span::styled(
+        " tab/←/→ switch tabs  ·  r cycle range  ·  ↑↓ scroll",
+        Style::default().fg(CLAURST_MUTED).add_modifier(Modifier::ITALIC),
+    )]))
+    .render(layout.footer_area, buf);
 }
 
 fn tab_span(label: &str, active: bool) -> Span<'static> {
     if active {
         Span::styled(
             label.to_string(),
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            Style::default()
+                .fg(CLAURST_ACCENT)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
         )
     } else {
-        Span::styled(label.to_string(), Style::default().fg(Color::DarkGray))
+        Span::styled(label.to_string(), Style::default().fg(CLAURST_MUTED))
     }
 }
 

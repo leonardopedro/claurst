@@ -79,18 +79,26 @@ impl SessionBrowserState {
         self.rename_input.clear();
     }
 
-    /// Move selection up one row (clamped at 0).
+    /// Move selection up one row, wrapping to the end.
     pub fn select_prev(&mut self) {
-        if self.selected_idx > 0 {
+        let count = self.sessions.len();
+        if count == 0 {
+            return;
+        }
+        if self.selected_idx == 0 {
+            self.selected_idx = count - 1;
+        } else {
             self.selected_idx -= 1;
         }
     }
 
-    /// Move selection down one row (clamped at last entry).
+    /// Move selection down one row, wrapping to the start.
     pub fn select_next(&mut self) {
-        if !self.sessions.is_empty() && self.selected_idx + 1 < self.sessions.len() {
-            self.selected_idx += 1;
+        let count = self.sessions.len();
+        if count == 0 {
+            return;
         }
+        self.selected_idx = (self.selected_idx + 1) % count;
     }
 
     /// Return a reference to the currently selected session, if any.
@@ -451,29 +459,26 @@ mod tests {
         assert_eq!(s.mode, SessionBrowserMode::Browse);
     }
 
-    // 3. select_next() advances selection, clamped at last.
+    // 3. select_next() advances selection and wraps to the start.
     #[test]
-    fn select_next_clamps_at_last() {
+    fn select_next_wraps_to_start() {
         let mut s = SessionBrowserState::new();
         s.open(sample_sessions());
         s.select_next();
         assert_eq!(s.selected_idx, 1);
         s.select_next();
         assert_eq!(s.selected_idx, 2);
-        s.select_next(); // already at last
-        assert_eq!(s.selected_idx, 2);
+        s.select_next();
+        assert_eq!(s.selected_idx, 0);
     }
 
-    // 4. select_prev() decrements, clamped at 0.
+    // 4. select_prev() decrements and wraps to the end.
     #[test]
-    fn select_prev_clamps_at_zero() {
+    fn select_prev_wraps_to_end() {
         let mut s = SessionBrowserState::new();
         s.open(sample_sessions());
-        s.selected_idx = 1;
         s.select_prev();
-        assert_eq!(s.selected_idx, 0);
-        s.select_prev(); // already at 0
-        assert_eq!(s.selected_idx, 0);
+        assert_eq!(s.selected_idx, 2);
     }
 
     // 5. selected_session() returns correct entry.

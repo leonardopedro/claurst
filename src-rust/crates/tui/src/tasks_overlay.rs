@@ -145,15 +145,19 @@ impl TasksOverlay {
     /// Navigate to previous task in the list.
     pub fn select_prev(&mut self) {
         if !self.tasks.is_empty() {
-            self.selected_idx = self.selected_idx.saturating_sub(1);
+            if self.selected_idx == 0 {
+                self.selected_idx = self.tasks.len() - 1;
+            } else {
+                self.selected_idx -= 1;
+            }
             self.ensure_visible();
         }
     }
 
     /// Navigate to next task in the list.
     pub fn select_next(&mut self) {
-        if !self.tasks.is_empty() && self.selected_idx < self.tasks.len() - 1 {
-            self.selected_idx += 1;
+        if !self.tasks.is_empty() {
+            self.selected_idx = (self.selected_idx + 1) % self.tasks.len();
             self.ensure_visible();
         }
     }

@@ -330,7 +330,7 @@ fn render_keybindings_page(frame: &mut Frame, area: Rect) {
             Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
         )]),
         Line::from(vec![Span::styled("  PgUp/PgDn    scroll transcript", Style::default().fg(Color::White))]),
-        Line::from(vec![Span::styled("  Ctrl+K       clear input", Style::default().fg(Color::White))]),
+        Line::from(vec![Span::styled("  Ctrl+K       command palette", Style::default().fg(Color::White))]),
     ];
 
     let right_lines: Vec<Line<'static>> = vec![

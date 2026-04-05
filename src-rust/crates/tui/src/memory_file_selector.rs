@@ -107,15 +107,23 @@ impl MemoryFileSelectorState {
     }
 
     pub fn select_prev(&mut self) {
-        if self.selected > 0 {
+        let count = self.files.len();
+        if count == 0 {
+            return;
+        }
+        if self.selected == 0 {
+            self.selected = count - 1;
+        } else {
             self.selected -= 1;
         }
     }
 
     pub fn select_next(&mut self) {
-        if !self.files.is_empty() && self.selected + 1 < self.files.len() {
-            self.selected += 1;
+        let count = self.files.len();
+        if count == 0 {
+            return;
         }
+        self.selected = (self.selected + 1) % count;
     }
 
     /// Return the path of the currently highlighted file, if any.

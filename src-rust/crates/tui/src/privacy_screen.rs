@@ -50,15 +50,23 @@ impl PrivacyScreen {
     }
 
     pub fn select_prev(&mut self) {
-        if self.selected_idx > 0 {
+        let count = self.toggles.len();
+        if count == 0 {
+            return;
+        }
+        if self.selected_idx == 0 {
+            self.selected_idx = count - 1;
+        } else {
             self.selected_idx -= 1;
         }
     }
 
     pub fn select_next(&mut self) {
-        if self.selected_idx + 1 < self.toggles.len() {
-            self.selected_idx += 1;
+        let count = self.toggles.len();
+        if count == 0 {
+            return;
         }
+        self.selected_idx = (self.selected_idx + 1) % count;
     }
 
     /// Toggle the currently selected privacy option.

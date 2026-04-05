@@ -4,10 +4,13 @@
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
+use ratatui::widgets::{Paragraph, Widget, Wrap};
 use ratatui::Frame;
 
-use crate::overlays::centered_rect;
+use crate::overlays::{
+    begin_modal_frame, modal_header_line_area, render_modal_title_frame, CLAURST_ACCENT,
+    CLAURST_MUTED, CLAURST_PANEL_BG,
+};
 
 // ---------------------------------------------------------------------------
 // State
@@ -54,22 +57,18 @@ pub fn render_context_viz(
         return;
     }
 
-    let dialog_width = 68u16.min(area.width.saturating_sub(4));
-    let dialog_height = 20u16.min(area.height.saturating_sub(4));
-    let dialog_area = centered_rect(dialog_width, dialog_height, area);
-
-    frame.render_widget(Clear, dialog_area);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(Line::from(vec![Span::styled(
-            " Context & Usage ",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-        )]))
-        .border_style(Style::default().fg(Color::Cyan));
-
-    let inner = block.inner(dialog_area);
-    frame.render_widget(block, dialog_area);
+    let layout = begin_modal_frame(frame, area, 72, 20, 2, 1);
+    render_modal_title_frame(frame, layout.header_area, "Context & usage", "esc");
+    if let Some(subtitle_area) = modal_header_line_area(layout.header_area, 1) {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![Span::styled(
+                " Token window, rate limits, and session cost.",
+                Style::default().fg(CLAURST_MUTED),
+            )])),
+            subtitle_area,
+        );
+    }
+    let inner = layout.body_area;
 
     // bar_width: leave room for "  label  [" prefix (14 chars) and "] 100%" suffix (6 chars)
     let bar_width = (inner.width as usize).saturating_sub(22).max(4);
@@ -88,20 +87,19 @@ pub fn render_context_viz(
     };
 
     let mut lines: Vec<Line<'static>> = Vec::new();
-    lines.push(Line::from(""));
 
     // -- Context window ----------------------------------------------------------
     lines.push(Line::from(vec![Span::styled(
-        "  Context Window",
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        " Context window",
+        Style::default().fg(CLAURST_ACCENT).add_modifier(Modifier::BOLD),
     )]));
 
     let filled = ((ctx_pct * bar_width as f32) as usize).min(bar_width);
     let empty = bar_width - filled;
     lines.push(Line::from(vec![
-        Span::styled("  [", Style::default().fg(Color::DarkGray)),
+        Span::styled(" [", Style::default().fg(CLAURST_MUTED)),
         Span::styled("\u{2588}".repeat(filled), Style::default().fg(ctx_color)),
-        Span::styled("\u{2591}".repeat(empty), Style::default().fg(Color::DarkGray)),
+        Span::styled("\u{2591}".repeat(empty), Style::default().fg(CLAURST_MUTED)),
         Span::styled(
             format!("]  {:.0}%  ({} / {})",
                 ctx_pct * 100.0,
@@ -116,11 +114,11 @@ pub fn render_context_viz(
 
     // -- Rate limits -------------------------------------------------------------
     lines.push(Line::from(vec![Span::styled(
-        "  Rate Limits",
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        " Rate limits",
+        Style::default().fg(CLAURST_ACCENT).add_modifier(Modifier::BOLD),
     )]));
 
-    for (label, pct_opt) in &[("  5-hour ", rate_5h), ("  7-day  ", rate_7d)] {
+    for (label, pct_opt) in &[(" 5-hour ", rate_5h), (" 7-day  ", rate_7d)] {
         match pct_opt {
             Some(pct) => {
                 let p = pct.clamp(0.0, 1.0);
@@ -135,9 +133,9 @@ pub fn render_context_viz(
                 let e = bar_width - f;
                 lines.push(Line::from(vec![
                     Span::styled(label.to_string(), Style::default().fg(Color::White)),
-                    Span::styled("  [", Style::default().fg(Color::DarkGray)),
+                    Span::styled("  [", Style::default().fg(CLAURST_MUTED)),
                     Span::styled("\u{2588}".repeat(f), Style::default().fg(color)),
-                    Span::styled("\u{2591}".repeat(e), Style::default().fg(Color::DarkGray)),
+                    Span::styled("\u{2591}".repeat(e), Style::default().fg(CLAURST_MUTED)),
                     Span::styled(
                         format!("]  {:.0}%", p * 100.0),
                         Style::default().fg(color),
@@ -147,7 +145,7 @@ pub fn render_context_viz(
             None => {
                 lines.push(Line::from(vec![
                     Span::styled(label.to_string(), Style::default().fg(Color::White)),
-                    Span::styled("  no data", Style::default().fg(Color::DarkGray)),
+                    Span::styled("  no data", Style::default().fg(CLAURST_MUTED)),
                 ]));
             }
         }
@@ -157,24 +155,24 @@ pub fn render_context_viz(
 
     // -- Cost --------------------------------------------------------------------
     lines.push(Line::from(vec![
-        Span::styled("  Session cost:  ", Style::default().fg(Color::White)),
+        Span::styled(" Session cost:  ", Style::default().fg(Color::White)),
         Span::styled(
             format!("${:.4}", cost_usd),
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default().fg(CLAURST_ACCENT).add_modifier(Modifier::BOLD),
         ),
     ]));
 
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![Span::styled(
-        "  Press Esc or Enter to close",
-        Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::ITALIC),
-    )]));
-
     Paragraph::new(lines)
         .wrap(Wrap { trim: false })
+        .style(Style::default().bg(CLAURST_PANEL_BG))
         .render(inner, frame.buffer_mut());
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![Span::styled(
+            " enter/esc close",
+            Style::default().fg(CLAURST_MUTED).add_modifier(Modifier::ITALIC),
+        )])),
+        layout.footer_area,
+    );
 }
 
 fn format_tokens(n: u64) -> String {

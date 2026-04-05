@@ -11,7 +11,9 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use std::cell::{Cell, RefCell};
 
-use crate::overlays::{centered_rect, render_dark_overlay, render_dialog_bg};
+use crate::overlays::{
+    centered_rect, modal_search_line, render_dark_overlay, render_dialog_bg, CLAURST_PANEL_BG,
+};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -77,15 +79,23 @@ impl DialogSelectState {
     }
 
     pub fn move_up(&mut self) {
-        if self.selected_index > 0 {
+        let count = self.filtered_indices.len();
+        if count == 0 {
+            return;
+        }
+        if self.selected_index == 0 {
+            self.selected_index = count - 1;
+        } else {
             self.selected_index -= 1;
         }
     }
 
     pub fn move_down(&mut self) {
-        if self.selected_index + 1 < self.filtered_indices.len() {
-            self.selected_index += 1;
+        let count = self.filtered_indices.len();
+        if count == 0 {
+            return;
         }
+        self.selected_index = (self.selected_index + 1) % count;
     }
 
     pub fn page_up(&mut self) {
@@ -96,6 +106,14 @@ impl DialogSelectState {
         self.selected_index = (self.selected_index + 10).min(
             self.filtered_indices.len().saturating_sub(1),
         );
+    }
+
+    pub fn move_home(&mut self) {
+        self.selected_index = 0;
+    }
+
+    pub fn move_end(&mut self) {
+        self.selected_index = self.filtered_indices.len().saturating_sub(1);
     }
 
     /// Get the currently selected item (if any).
@@ -182,7 +200,7 @@ pub fn render_dialog_select(
     }
 
     let dim = Color::Rgb(90, 90, 90);
-    let dialog_bg = Color::Rgb(30, 30, 35);
+    let dialog_bg = CLAURST_PANEL_BG;
     let highlight_bg = Color::Rgb(233, 30, 99); // pink highlight bar
     let highlight_fg = Color::White;
     let category_fg = Color::Rgb(233, 30, 99); // pink category names
@@ -196,9 +214,16 @@ pub fn render_dialog_select(
     // Count visible lines: header(2) + items + category gaps + footer(0)
     let item_lines: u16 = state.filtered_indices.len() as u16;
     let category_count = if state.filter.is_empty() {
-        let mut cats = std::collections::HashSet::new();
-        for &idx in &state.filtered_indices { cats.insert(&state.items[idx].category); }
-        cats.len() as u16
+        let mut sections = 0u16;
+        let mut last_category: Option<&str> = None;
+        for &idx in &state.filtered_indices {
+            let category = state.items[idx].category.as_str();
+            if last_category != Some(category) {
+                sections += 1;
+                last_category = Some(category);
+            }
+        }
+        sections
     } else { 0 };
     let content_height = 3 + item_lines + category_count * 2; // search + blank + items + cat headers + gaps
     let height = content_height.min(max_height).max(8);
@@ -216,12 +241,26 @@ pub fn render_dialog_select(
         height: dialog_area.height.saturating_sub(2),
     };
 
-    // ── Build lines ──
-    let mut lines: Vec<Line<'static>> = Vec::new();
+    let header_height = 3u16.min(inner.height);
+    let header_area = Rect {
+        x: inner.x,
+        y: inner.y,
+        width: inner.width,
+        height: header_height,
+    };
+    let body_area = Rect {
+        x: inner.x,
+        y: inner.y.saturating_add(header_height),
+        width: inner.width,
+        height: inner.height.saturating_sub(header_height),
+    };
+
+    // ── Fixed header ──
+    let mut header_lines: Vec<Line<'static>> = Vec::new();
 
     // Title row: "Connect a provider" on left, "esc" on right
     let title_pad = inner.width.saturating_sub(state.title.len() as u16 + 4) as usize;
-    lines.push(Line::from(vec![
+    header_lines.push(Line::from(vec![
         Span::styled(
             format!(" {}", state.title),
             Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
@@ -233,32 +272,19 @@ pub fn render_dialog_select(
     ]));
 
     // Search field
-    lines.push(Line::from(""));
-    let search_text = if state.filter.is_empty() {
-        "Search".to_string()
-    } else {
-        state.filter.clone()
-    };
-    let search_style = if state.filter.is_empty() {
-        Style::default().fg(dim)
-    } else {
-        Style::default().fg(Color::White)
-    };
-    // Show cursor on first char if empty
-    if state.filter.is_empty() {
-        lines.push(Line::from(vec![
-            Span::styled(" S", Style::default().fg(dim).add_modifier(Modifier::UNDERLINED)),
-            Span::styled("earch", search_style),
-        ]));
-    } else {
-        lines.push(Line::from(vec![
-            Span::styled(format!(" {}", search_text), search_style),
-        ]));
+    header_lines.push(Line::from(""));
+    header_lines.push(modal_search_line(&state.filter, "Search", dim, Color::White));
+
+    frame.render_widget(Paragraph::new(header_lines).bg(dialog_bg), header_area);
+
+    if body_area.height == 0 {
+        return;
     }
 
-    // ── Items ──
+    // ── Scrollable items ──
+    let mut lines: Vec<Line<'static>> = Vec::new();
     let mut row_map: Vec<(u16, usize)> = Vec::new();
-    let mut current_line: u16 = lines.len() as u16;
+    let mut current_line: u16 = 0;
     let mut last_category = String::new();
 
     for (display_idx, &item_idx) in state.filtered_indices.iter().enumerate() {
@@ -283,12 +309,10 @@ pub fn render_dialog_select(
             (Color::White, dialog_bg)
         };
 
-        let mut spans = vec![
-            Span::styled(
-                format!(" {}", item.title),
-                Style::default().fg(item_fg).bg(item_bg),
-            ),
-        ];
+        let mut spans = vec![Span::styled(
+            format!(" {}", item.title),
+            Style::default().fg(item_fg).bg(item_bg),
+        )];
 
         // Auth hint in parens, dimmed
         if !item.description.is_empty() {
@@ -298,28 +322,36 @@ pub fn render_dialog_select(
             ));
         }
 
-        // Pad the rest of the line with bg color for full-width highlight
-        if is_selected {
-            let text_len: usize = spans.iter().map(|s| s.content.len()).sum();
-            let pad = inner.width.saturating_sub(text_len as u16) as usize;
-            if pad > 0 {
-                spans.push(Span::styled(
-                    " ".repeat(pad),
-                    Style::default().bg(highlight_bg),
-                ));
-            }
+        let badge_text = item.badge.clone().unwrap_or_default();
+        let text_len: usize = spans.iter().map(|s| s.content.len()).sum();
+        let badge_len = if badge_text.is_empty() { 0 } else { badge_text.len() + 1 };
+        let pad = inner
+            .width
+            .saturating_sub(text_len as u16 + badge_len as u16) as usize;
+        if pad > 0 {
+            spans.push(Span::styled(
+                " ".repeat(pad),
+                Style::default().bg(item_bg),
+            ));
+        }
+        if !badge_text.is_empty() {
+            spans.push(Span::styled(
+                format!(" {}", badge_text),
+                Style::default()
+                    .fg(if is_selected { highlight_fg } else { dim })
+                    .bg(item_bg)
+                    .add_modifier(Modifier::BOLD),
+            ));
         }
 
-        row_map.push((inner.y + current_line, display_idx));
+        row_map.push((body_area.y + current_line, display_idx));
         lines.push(Line::from(spans));
         current_line += 1;
     }
 
-    *state.row_to_item.borrow_mut() = row_map;
-
     if state.filtered_indices.is_empty() {
         lines.push(Line::from(vec![Span::styled(
-            " No matches",
+            " No results found",
             Style::default().fg(dim),
         )]));
     }
@@ -329,11 +361,11 @@ pub fn render_dialog_select(
         let map = state.row_to_item.borrow();
         map.iter()
             .find(|(_, idx)| *idx == state.selected_index)
-            .map(|(abs_row, _)| abs_row.saturating_sub(inner.y))
+            .map(|(abs_row, _)| abs_row.saturating_sub(body_area.y))
             .unwrap_or(0)
     };
     let total_lines = lines.len() as u16;
-    let visible = inner.height;
+    let visible = body_area.height;
     let scroll_y = if total_lines <= visible {
         0u16
     } else if selected_item_line + 3 >= visible {
@@ -342,10 +374,22 @@ pub fn render_dialog_select(
         0
     };
 
+    *state.row_to_item.borrow_mut() = row_map
+        .into_iter()
+        .filter_map(|(row, idx)| {
+            let screen_row = row.saturating_sub(scroll_y);
+            if screen_row >= body_area.y && screen_row < body_area.y.saturating_add(body_area.height) {
+                Some((screen_row, idx))
+            } else {
+                None
+            }
+        })
+        .collect();
+
     let para = Paragraph::new(lines)
         .bg(dialog_bg)
         .scroll((scroll_y, 0));
-    frame.render_widget(para, inner);
+    frame.render_widget(para, body_area);
 }
 
 // ---------------------------------------------------------------------------
@@ -408,7 +452,7 @@ mod tests {
     }
 
     #[test]
-    fn move_down_and_up() {
+    fn move_down_and_up_wrap() {
         let mut state = DialogSelectState::new("Test", sample_items());
         state.open();
         assert_eq!(state.selected_index, 0);
@@ -416,14 +460,13 @@ mod tests {
         assert_eq!(state.selected_index, 1);
         state.move_down();
         assert_eq!(state.selected_index, 2);
-        // Should not go past last
+        // Wrap back to first after the last item.
         state.move_down();
+        assert_eq!(state.selected_index, 0);
+        state.move_up();
         assert_eq!(state.selected_index, 2);
         state.move_up();
         assert_eq!(state.selected_index, 1);
-        state.move_up();
-        assert_eq!(state.selected_index, 0);
-        // Should not go below 0
         state.move_up();
         assert_eq!(state.selected_index, 0);
     }
@@ -472,6 +515,16 @@ mod tests {
         assert_eq!(state.selected_index, 2); // clamped to last
         state.page_up();
         assert_eq!(state.selected_index, 0);
+    }
+
+    #[test]
+    fn home_and_end_jump_to_edges() {
+        let mut state = DialogSelectState::new("Test", sample_items());
+        state.open();
+        state.move_end();
+        assert_eq!(state.selected().unwrap().id, "ollama");
+        state.move_home();
+        assert_eq!(state.selected().unwrap().id, "anthropic");
     }
 
     #[test]

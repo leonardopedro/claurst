@@ -8,12 +8,12 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
 pub const CLAURST_ACCENT: Color = Color::Rgb(233, 30, 99);
-pub const CLAURST_PANEL_BG: Color = Color::Rgb(30, 30, 35);
+pub const CLAURST_PANEL_BG: Color = Color::Rgb(20, 20, 28);
 pub const CLAURST_PANEL_BORDER: Color = Color::Rgb(72, 72, 80);
 pub const CLAURST_TEXT: Color = Color::Rgb(235, 235, 240);
 pub const CLAURST_MUTED: Color = Color::Rgb(110, 110, 118);
@@ -70,6 +70,195 @@ pub fn render_dialog_bg_buf(buf: &mut Buffer, area: Rect) {
                 cell.set_fg(CLAURST_TEXT);
             }
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ModalLayout {
+    pub dialog_area: Rect,
+    pub inner_area: Rect,
+    pub header_area: Rect,
+    pub body_area: Rect,
+    pub footer_area: Rect,
+}
+
+fn compute_modal_layout(
+    area: Rect,
+    width: u16,
+    height: u16,
+    header_height: u16,
+    footer_height: u16,
+) -> ModalLayout {
+    let dialog_width = width.min(area.width.saturating_sub(4)).max(8);
+    let dialog_height = height.min(area.height.saturating_sub(4)).max(6);
+    let dialog_area = centered_rect(dialog_width, dialog_height, area);
+    let inner_area = Rect {
+        x: dialog_area.x + 1,
+        y: dialog_area.y + 1,
+        width: dialog_area.width.saturating_sub(2),
+        height: dialog_area.height.saturating_sub(2),
+    };
+    let header_h = header_height.min(inner_area.height);
+    let footer_h = footer_height.min(inner_area.height.saturating_sub(header_h));
+    let body_area = Rect {
+        x: inner_area.x,
+        y: inner_area.y.saturating_add(header_h),
+        width: inner_area.width,
+        height: inner_area.height.saturating_sub(header_h + footer_h),
+    };
+    ModalLayout {
+        dialog_area,
+        inner_area,
+        header_area: Rect {
+            x: inner_area.x,
+            y: inner_area.y,
+            width: inner_area.width,
+            height: header_h,
+        },
+        body_area,
+        footer_area: Rect {
+            x: inner_area.x,
+            y: inner_area.y + inner_area.height.saturating_sub(footer_h),
+            width: inner_area.width,
+            height: footer_h,
+        },
+    }
+}
+
+pub fn begin_modal_frame(
+    frame: &mut Frame,
+    area: Rect,
+    width: u16,
+    height: u16,
+    header_height: u16,
+    footer_height: u16,
+) -> ModalLayout {
+    let layout = compute_modal_layout(area, width, height, header_height, footer_height);
+    render_dark_overlay(frame, area);
+    frame.render_widget(Clear, layout.dialog_area);
+    render_dialog_bg(frame, layout.dialog_area);
+    layout
+}
+
+pub fn begin_modal_buf(
+    buf: &mut Buffer,
+    area: Rect,
+    width: u16,
+    height: u16,
+    header_height: u16,
+    footer_height: u16,
+) -> ModalLayout {
+    let layout = compute_modal_layout(area, width, height, header_height, footer_height);
+    render_dark_overlay_buf(buf, area);
+    Clear.render(layout.dialog_area, buf);
+    render_dialog_bg_buf(buf, layout.dialog_area);
+    layout
+}
+
+pub fn modal_title_line(title: &str, right_hint: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            format!(" {}", title),
+            Style::default().fg(CLAURST_TEXT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  {}", right_hint),
+            Style::default().fg(CLAURST_MUTED),
+        ),
+    ])
+}
+
+pub fn render_modal_title_frame(frame: &mut Frame, area: Rect, title: &str, right_hint: &str) {
+    if area.height == 0 {
+        return;
+    }
+    let title_width = UnicodeWidthStr::width(title);
+    let hint_width = UnicodeWidthStr::width(right_hint);
+    let padding = area
+        .width
+        .saturating_sub((title_width + hint_width + 3) as u16) as usize;
+    let line = Line::from(vec![
+        Span::styled(
+            format!(" {}", title),
+            Style::default().fg(CLAURST_TEXT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ".repeat(padding), Style::default().fg(CLAURST_TEXT)),
+        Span::styled(
+            right_hint.to_string(),
+            Style::default().fg(CLAURST_MUTED),
+        ),
+    ]);
+    frame.render_widget(Paragraph::new(line), Rect { x: area.x, y: area.y, width: area.width, height: 1 });
+}
+
+pub fn render_modal_title_buf(buf: &mut Buffer, area: Rect, title: &str, right_hint: &str) {
+    if area.height == 0 {
+        return;
+    }
+    let title_width = UnicodeWidthStr::width(title);
+    let hint_width = UnicodeWidthStr::width(right_hint);
+    let padding = area
+        .width
+        .saturating_sub((title_width + hint_width + 3) as u16) as usize;
+    let line = Line::from(vec![
+        Span::styled(
+            format!(" {}", title),
+            Style::default().fg(CLAURST_TEXT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ".repeat(padding), Style::default().fg(CLAURST_TEXT)),
+        Span::styled(
+            right_hint.to_string(),
+            Style::default().fg(CLAURST_MUTED),
+        ),
+    ]);
+    Paragraph::new(line).render(
+        Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: 1,
+        },
+        buf,
+    );
+}
+
+pub fn modal_header_line_area(header_area: Rect, row: u16) -> Option<Rect> {
+    if header_area.height <= row {
+        return None;
+    }
+    Some(Rect {
+        x: header_area.x,
+        y: header_area.y + row,
+        width: header_area.width,
+        height: 1,
+    })
+}
+
+pub fn modal_search_line(
+    query: &str,
+    placeholder: &str,
+    placeholder_color: Color,
+    query_color: Color,
+) -> Line<'static> {
+    if query.is_empty() {
+        let mut chars = placeholder.chars();
+        let first = chars.next().unwrap_or(' ');
+        let rest: String = chars.collect();
+        Line::from(vec![
+            Span::styled(" ", Style::default().fg(placeholder_color)),
+            Span::styled(
+                first.to_string(),
+                Style::default()
+                    .fg(placeholder_color)
+                    .add_modifier(Modifier::UNDERLINED),
+            ),
+            Span::styled(rest, Style::default().fg(placeholder_color)),
+        ])
+    } else {
+        Line::from(vec![Span::styled(
+            format!(" {}", query),
+            Style::default().fg(query_color),
+        )])
     }
 }
 
@@ -159,76 +348,26 @@ pub fn render_help_overlay(frame: &mut Frame, overlay: &HelpOverlay, area: Rect)
         return;
     }
 
-    render_dark_overlay(frame, area);
-
-    let dialog_width = 92u16.min(area.width.saturating_sub(2));
-    let dialog_height = 34u16.min(area.height.saturating_sub(2));
-    let dialog_area = centered_rect(dialog_width, dialog_height, area);
-
-    frame.render_widget(Clear, dialog_area);
-    render_dialog_bg(frame, dialog_area);
-
-    // Outer block
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(Line::from(vec![
-            Span::styled(" Help ", Style::default().fg(CLAURST_ACCENT).add_modifier(Modifier::BOLD)),
-            Span::styled("— Claurst  ", Style::default().fg(CLAURST_MUTED)),
-        ]))
-        .border_style(Style::default().fg(CLAURST_PANEL_BORDER))
-        .style(Style::default().bg(CLAURST_PANEL_BG).fg(CLAURST_TEXT));
-    frame.render_widget(block, dialog_area);
-
-    let inner = Rect {
-        x: dialog_area.x + 1,
-        y: dialog_area.y + 1,
-        width: dialog_area.width.saturating_sub(2),
-        height: dialog_area.height.saturating_sub(2),
-    };
-
-    // Reserve bottom row for version / hint line
-    let body_height = inner.height.saturating_sub(1);
-    let body_area = Rect { x: inner.x, y: inner.y, width: inner.width, height: body_height };
-    let version_area = Rect {
-        x: inner.x,
-        y: inner.y + body_height,
-        width: inner.width,
-        height: 1,
-    };
-
-    // Split filter row at top (if active)
-    let (filter_area, content_area) = if !overlay.filter.is_empty() {
-        let splits = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(2), Constraint::Min(1)])
-            .split(body_area);
-        (Some(splits[0]), splits[1])
-    } else {
-        (None, body_area)
-    };
-
-    // Render filter row
-    if let Some(fa) = filter_area {
-        let filter_line = Line::from(vec![
-            Span::styled("  Filter: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                overlay.filter.clone(),
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
-            ),
-        ]);
-        frame.render_widget(Paragraph::new(filter_line), Rect { x: fa.x, y: fa.y, width: fa.width, height: 1 });
-        // separator
-        let sep = Line::from(Span::styled(
-            "\u{2500}".repeat(fa.width as usize),
-            Style::default().fg(Color::DarkGray),
-        ));
-        frame.render_widget(Paragraph::new(sep), Rect { x: fa.x, y: fa.y + 1, width: fa.width, height: 1 });
+    let layout = begin_modal_frame(frame, area, 100, 36, 3, 1);
+    render_modal_title_frame(frame, layout.header_area, "Shortcuts & commands", "esc");
+    let search_line = modal_search_line(
+        &overlay.filter,
+        "Search shortcuts or commands",
+        CLAURST_MUTED,
+        CLAURST_TEXT,
+    );
+    if let Some(search_area) = modal_header_line_area(layout.header_area, 2) {
+        frame.render_widget(Paragraph::new(search_line), search_area);
     }
 
-    // Two columns: left = keyboard shortcuts, right = slash commands
+    let content_area = layout.body_area;
+    if content_area.height == 0 {
+        return;
+    }
+
     let col_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(40), Constraint::Length(1), Constraint::Min(1)])
+        .constraints([Constraint::Percentage(42), Constraint::Length(1), Constraint::Min(1)])
         .split(content_area);
 
     // ─── Left column: keyboard shortcuts by category ───────────────────────
@@ -236,14 +375,14 @@ pub fn render_help_overlay(frame: &mut Frame, overlay: &HelpOverlay, area: Rect)
 
     left_lines.push(Line::from(Span::styled(
         " Keyboard Shortcuts",
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        Style::default().fg(CLAURST_ACCENT).add_modifier(Modifier::BOLD),
     )));
     left_lines.push(Line::from(""));
 
     // Navigation category
     left_lines.push(Line::from(Span::styled(
         " Navigation",
-        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+        Style::default().fg(CLAURST_ACCENT).add_modifier(Modifier::BOLD),
     )));
     for (key, desc) in &[
         ("PageUp / PgDn",   "Scroll messages"),
@@ -257,7 +396,7 @@ pub fn render_help_overlay(frame: &mut Frame, overlay: &HelpOverlay, area: Rect)
     // Input category
     left_lines.push(Line::from(Span::styled(
         " Input",
-        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+        Style::default().fg(CLAURST_ACCENT).add_modifier(Modifier::BOLD),
     )));
     for (key, desc) in &[
         ("Enter",           "Submit message"),
@@ -272,10 +411,12 @@ pub fn render_help_overlay(frame: &mut Frame, overlay: &HelpOverlay, area: Rect)
     // App category
     left_lines.push(Line::from(Span::styled(
         " App",
-        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+        Style::default().fg(CLAURST_ACCENT).add_modifier(Modifier::BOLD),
     )));
     for (key, desc) in &[
         ("F1 / ?",          "Toggle help"),
+        ("Ctrl+A",          "Model picker"),
+        ("Ctrl+K",          "Command palette"),
         ("Ctrl+C",          "Cancel / quit"),
         ("Ctrl+D",          "Quit (empty input)"),
         ("Ctrl+L",          "Clear screen"),
@@ -284,13 +425,15 @@ pub fn render_help_overlay(frame: &mut Frame, overlay: &HelpOverlay, area: Rect)
     }
 
     frame.render_widget(
-        Paragraph::new(left_lines).wrap(Wrap { trim: false }),
+        Paragraph::new(left_lines)
+            .wrap(Wrap { trim: false })
+            .style(Style::default().bg(CLAURST_PANEL_BG)),
         col_chunks[0],
     );
 
     // ─── Center divider ────────────────────────────────────────────────────
     let divider_lines: Vec<Line<'static>> = (0..content_area.height)
-        .map(|_| Line::from(Span::styled("\u{2502}", Style::default().fg(Color::DarkGray))))
+        .map(|_| Line::from(Span::styled("\u{2502}", Style::default().fg(CLAURST_MUTED))))
         .collect();
     frame.render_widget(Paragraph::new(divider_lines), col_chunks[1]);
 
@@ -311,7 +454,7 @@ pub fn render_help_overlay(frame: &mut Frame, overlay: &HelpOverlay, area: Rect)
 
     right_lines.push(Line::from(Span::styled(
         " Slash Commands",
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        Style::default().fg(CLAURST_ACCENT).add_modifier(Modifier::BOLD),
     )));
     right_lines.push(Line::from(""));
 
@@ -324,7 +467,7 @@ pub fn render_help_overlay(frame: &mut Frame, overlay: &HelpOverlay, area: Rect)
             }
             right_lines.push(Line::from(Span::styled(
                 format!(" {}", entry.category),
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                Style::default().fg(CLAURST_ACCENT).add_modifier(Modifier::BOLD),
             )));
         }
         let aliases_text = if entry.aliases.is_empty() {
@@ -336,18 +479,18 @@ pub fn render_help_overlay(frame: &mut Frame, overlay: &HelpOverlay, area: Rect)
             Span::raw("  "),
             Span::styled(
                 format!("/{:<14}", entry.name),
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                Style::default().fg(CLAURST_TEXT).add_modifier(Modifier::BOLD),
             ),
-            Span::styled(aliases_text, Style::default().fg(Color::DarkGray)),
+            Span::styled(aliases_text, Style::default().fg(CLAURST_MUTED)),
             Span::raw("  "),
-            Span::raw(entry.description.clone()),
+            Span::styled(entry.description.clone(), Style::default().fg(CLAURST_MUTED)),
         ]));
     }
 
     if filtered.is_empty() {
         right_lines.push(Line::from(Span::styled(
-            "  (no matching commands)",
-            Style::default().fg(Color::DarkGray),
+            " No matching commands",
+            Style::default().fg(CLAURST_MUTED),
         )));
     }
 
@@ -359,18 +502,23 @@ pub fn render_help_overlay(frame: &mut Frame, overlay: &HelpOverlay, area: Rect)
     frame.render_widget(
         Paragraph::new(right_lines)
             .wrap(Wrap { trim: false })
-            .scroll((scroll, 0)),
+            .scroll((scroll, 0))
+            .style(Style::default().bg(CLAURST_PANEL_BG)),
         col_chunks[2],
     );
 
-    // ─── Version / hint bar ────────────────────────────────────────────────
     let version_line = Line::from(vec![
         Span::styled(
-            format!(" v{}  \u{00b7}  Type to filter  \u{00b7}  \u{2191}\u{2193} scroll commands  \u{00b7}  Esc to close", APP_VERSION),
-            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+            format!(
+                " v{}  ·  type to filter  ·  ↑↓ scroll commands  ·  esc close",
+                APP_VERSION
+            ),
+            Style::default()
+                .fg(CLAURST_MUTED)
+                .add_modifier(Modifier::ITALIC),
         ),
     ]);
-    frame.render_widget(Paragraph::new(version_line), version_area);
+    frame.render_widget(Paragraph::new(version_line), layout.footer_area);
 }
 
 // ============================================================================
@@ -746,16 +894,23 @@ impl HistorySearchOverlay {
     }
 
     pub fn select_prev(&mut self) {
-        if self.selected_idx > 0 {
+        let count = self.matches.len();
+        if count == 0 {
+            return;
+        }
+        if self.selected_idx == 0 {
+            self.selected_idx = count - 1;
+        } else {
             self.selected_idx -= 1;
         }
     }
 
     pub fn select_next(&mut self) {
-        let max = self.matches.len().saturating_sub(1);
-        if self.selected_idx < max {
-            self.selected_idx += 1;
+        let count = self.matches.len();
+        if count == 0 {
+            return;
         }
+        self.selected_idx = (self.selected_idx + 1) % count;
     }
 
     /// Return the currently selected history entry text, if any.
@@ -1038,9 +1193,16 @@ impl MessageSelectorOverlay {
     }
 
     pub fn select_prev(&mut self) {
-        if self.selected_idx > 0 {
+        const VISIBLE_ROWS: usize = 12;
+        let count = self.messages.len();
+        if count == 0 {
+            return;
+        }
+        if self.selected_idx == 0 {
+            self.selected_idx = count - 1;
+            self.scroll_offset = count.saturating_sub(VISIBLE_ROWS);
+        } else {
             self.selected_idx -= 1;
-            // Scroll up if needed
             if self.selected_idx < self.scroll_offset {
                 self.scroll_offset = self.selected_idx;
             }
@@ -1048,8 +1210,19 @@ impl MessageSelectorOverlay {
     }
 
     pub fn select_next(&mut self) {
-        if self.selected_idx + 1 < self.messages.len() {
+        const VISIBLE_ROWS: usize = 12;
+        let count = self.messages.len();
+        if count == 0 {
+            return;
+        }
+        if self.selected_idx + 1 >= count {
+            self.selected_idx = 0;
+            self.scroll_offset = 0;
+        } else {
             self.selected_idx += 1;
+            if self.selected_idx >= self.scroll_offset + VISIBLE_ROWS {
+                self.scroll_offset = self.selected_idx - VISIBLE_ROWS + 1;
+            }
         }
     }
 
@@ -1312,10 +1485,10 @@ fn kb_line<'a>(key: &str, desc: &str) -> Line<'a> {
         Span::styled(
             format!("{:<20}", key),
             Style::default()
-                .fg(Color::Green)
+                .fg(CLAURST_TEXT)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(desc.to_string()),
+        Span::styled(desc.to_string(), Style::default().fg(CLAURST_MUTED)),
     ])
 }
 
@@ -1356,11 +1529,23 @@ impl GlobalSearchState {
     pub fn close(&mut self) { self.open = false; }
 
     pub fn select_prev(&mut self) {
-        if self.selected > 0 { self.selected -= 1; }
+        let count = self.results.len();
+        if count == 0 {
+            return;
+        }
+        if self.selected == 0 {
+            self.selected = count - 1;
+        } else {
+            self.selected -= 1;
+        }
     }
 
     pub fn select_next(&mut self) {
-        if self.selected + 1 < self.results.len() { self.selected += 1; }
+        let count = self.results.len();
+        if count == 0 {
+            return;
+        }
+        self.selected = (self.selected + 1) % count;
     }
 
     pub fn push_char(&mut self, c: char) {
@@ -1673,6 +1858,15 @@ mod tests {
         assert_eq!(h.filter, "h");
     }
 
+    #[test]
+    fn modal_search_line_separates_leading_space_from_cursor() {
+        let line = modal_search_line("", "Search", CLAURST_MUTED, CLAURST_TEXT);
+        assert_eq!(line.spans.len(), 3);
+        assert_eq!(line.spans[0].content.as_ref(), " ");
+        assert_eq!(line.spans[1].content.as_ref(), "S");
+        assert_eq!(line.spans[2].content.as_ref(), "earch");
+    }
+
     // --- HistorySearchOverlay -----------------------------------------
 
     #[test]
@@ -1702,10 +1896,12 @@ mod tests {
         let history = vec!["a".to_string(), "b".to_string(), "c".to_string()];
         let mut hs = HistorySearchOverlay::open(&history);
         assert_eq!(hs.selected_idx, 0);
-        hs.select_next();
-        assert_eq!(hs.selected_idx, 1);
         hs.select_prev();
+        assert_eq!(hs.selected_idx, 2);
+        hs.select_next();
         assert_eq!(hs.selected_idx, 0);
+        hs.select_prev();
+        assert_eq!(hs.selected_idx, 2);
     }
 
     #[test]
@@ -1859,6 +2055,8 @@ mod tests {
         assert_eq!(sel.selected_idx, 1);
         sel.select_next();
         assert_eq!(sel.selected_idx, 2);
+        sel.select_next();
+        assert_eq!(sel.selected_idx, 0);
     }
 
     // --- RewindFlowOverlay -------------------------------------------
