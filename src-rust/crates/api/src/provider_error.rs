@@ -188,6 +188,17 @@ impl fmt::Display for ProviderError {
 
 impl std::error::Error for ProviderError {}
 
+impl From<crate::e2ee::E2eeError> for ProviderError {
+    fn from(err: crate::e2ee::E2eeError) -> Self {
+        ProviderError::Other {
+            provider: ProviderId::new(ProviderId::CHUTES),
+            message: err.to_string(),
+            status: None,
+            body: None,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // From<ProviderError> for ClaudeError
 // ---------------------------------------------------------------------------

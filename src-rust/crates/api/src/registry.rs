@@ -12,7 +12,7 @@ use crate::client::ClientConfig;
 use crate::provider::LlmProvider;
 use crate::provider_types::ProviderStatus;
 use crate::providers::{
-    AnthropicProvider, AzureProvider, BedrockProvider, CodexProvider, CohereProvider,
+    AnthropicProvider, AzureProvider, BedrockProvider, ChutesProvider, CodexProvider, CohereProvider,
     CopilotProvider, GoogleProvider, MinimaxProvider, OpenAiProvider,
 };
 
@@ -77,6 +77,9 @@ fn provider_from_key(provider_id: &str, key: String) -> Option<Arc<dyn LlmProvid
         }
         "cohere" => Some(Arc::new(CohereProvider::new(key))),
         "custom-openai" => Some(Arc::new(p::custom_openai().with_api_key(key))),
+        "chutes" => {
+            Some(Arc::new(ChutesProvider::with_config(Some(key))))
+        }
         _ => None,
     }
 }
@@ -194,6 +197,13 @@ pub fn provider_from_config(
         }
         "codex" | "openai-codex" => {
             CodexProvider::from_stored().map(|provider| Arc::new(provider) as Arc<dyn LlmProvider>)
+        }
+        "chutes" => {
+            let mut provider = ChutesProvider::new();
+            if let Some(key) = api_key {
+                provider = provider.with_api_key(key);
+            }
+            Some(Arc::new(provider))
         }
         _ => api_key.and_then(|key| provider_from_key(provider_id, key)),
     }
@@ -565,6 +575,9 @@ impl ProviderRegistry {
         }
         if std::env::var("FIREWORKS_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
             self.register(Arc::new(p::fireworks()));
+        }
+        if std::env::var("CHUTES_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+            self.register(Arc::new(ChutesProvider::new()));
         }
         self
     }

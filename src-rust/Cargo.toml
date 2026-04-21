@@ -97,6 +97,13 @@ tokio-util = { version = "0.7", features = ["codec", "rt"] }
 # WebSocket
 tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
 
+# Post-Quantum E2EE (Chutes TEE protocol)
+pqcrypto-kyber = "0.8"
+pqcrypto-traits = "0.3"
+chacha20poly1305 = "0.10"
+flate2 = "1.1"
+hkdf = "0.12"
+
 # JSON Schema
 schemars = { version = "0.8", features = ["derive"] }
 

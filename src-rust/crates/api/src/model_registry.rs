@@ -86,6 +86,7 @@ impl ModelRegistry {
         self.add_openai_models();
         self.add_google_models();
         self.add_zai_models();
+        self.add_chutes_models();
     }
 
     fn add_anthropic_models(&mut self) {
@@ -195,6 +196,34 @@ impl ModelRegistry {
                 cost_input: Some(cost_in),
                 cost_output: Some(cost_out),
                 cost_cache_read: Some(cost_cache_read),
+                cost_cache_write: None,
+                tool_calling: true,
+                reasoning: true,
+                vision: false,
+                family: Some("glm".to_string()),
+                status: "active".to_string(),
+            });
+        }
+    }
+
+    fn add_chutes_models(&mut self) {
+        let pid = ProviderId::new(ProviderId::CHUTES);
+        for (id, name, ctx, out) in [
+            ("chutes/zai-org/GLM-5.1-TEE",     "GLM-5.1 TEE (Chutes)",    200_000u32, 128_000u32),
+            ("chutes/zai-org/GLM-5-TEE",       "GLM-5 TEE (Chutes)",      200_000,    128_000),
+            ("chutes/zai-org/GLM-5-Turbo-TEE", "GLM-5 Turbo TEE (Chutes)",200_000,    128_000),
+        ] {
+            self.insert(ModelEntry {
+                info: ModelInfo {
+                    id: ModelId::new(id),
+                    provider_id: pid.clone(),
+                    name: name.to_string(),
+                    context_window: ctx,
+                    max_output_tokens: out,
+                },
+                cost_input: None,
+                cost_output: None,
+                cost_cache_read: None,
                 cost_cache_write: None,
                 tool_calling: true,
                 reasoning: true,

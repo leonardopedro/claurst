@@ -26,6 +26,8 @@ use tracing::{debug, warn};
 pub mod cch;
 pub mod codex_adapter;
 
+pub mod e2ee;
+
 // Provider-agnostic unified types (Phase 1A).
 pub mod provider_types;
 pub mod provider_error;
@@ -96,6 +98,9 @@ pub use providers::{
 
 // Phase 2D re-exports — Cohere native provider.
 pub use providers::CohereProvider;
+
+// Phase 2F re-exports — Chutes E2EE provider.
+pub use providers::ChutesProvider;
 
 // Phase 4 re-exports — concrete message transformers.
 pub use transformers::{AnthropicTransformer, OpenAiChatTransformer};

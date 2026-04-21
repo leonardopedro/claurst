@@ -28,3 +28,9 @@ urlencoding = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }
 hmac = "0.12"
+pqcrypto-kyber = { workspace = true }
+pqcrypto-traits = { workspace = true }
+chacha20poly1305 = { workspace = true }
+flate2 = { workspace = true }
+getrandom = { workspace = true }
+hkdf = "0.12"

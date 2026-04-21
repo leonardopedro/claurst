@@ -659,6 +659,7 @@ pub mod config {
             "upstage" => &["UPSTAGE_API_KEY"],
             "stepfun" => &["STEPFUN_API_KEY"],
             "fireworks" => &["FIREWORKS_API_KEY"],
+            "chutes" => &["CHUTES_API_KEY"],
             "cloudflare" | "cloudflare-ai-gateway" | "cloudflare-workers-ai" => {
                 &["CLOUDFLARE_API_TOKEN"]
             }
@@ -681,6 +682,7 @@ pub mod config {
             "ollama" => Some("OLLAMA_HOST"),
             "lmstudio" | "lm-studio" => Some("LM_STUDIO_HOST"),
             "llamacpp" | "llama-cpp" | "llama-server" => Some("LLAMA_CPP_HOST"),
+            "chutes" => Some("CHUTES_API_BASE"),
             _ => None,
         }
     }
@@ -693,6 +695,7 @@ pub mod config {
             "ollama" => Some("http://localhost:11434"),
             "lmstudio" | "lm-studio" => Some("http://localhost:1234"),
             "llamacpp" | "llama-cpp" | "llama-server" => Some("http://localhost:8080"),
+            "chutes" => Some("https://llm.chutes.ai"),
             _ => None,
         }
     }
