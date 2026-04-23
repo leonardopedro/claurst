@@ -40,6 +40,9 @@ image = { workspace = true, optional = true }
 # PTY support — used by PtyBashTool on Unix
 portable-pty = "0.9"
 
+# Playwright for browser automation
+playwright-rs = "0.12"
+
 [target.'cfg(unix)'.dependencies]
 nix = { workspace = true }
 

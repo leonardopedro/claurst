@@ -8,6 +8,7 @@ use claurst_core::config::PermissionMode;
 use claurst_core::cost::CostTracker;
 use claurst_core::permissions::{PermissionDecision, PermissionHandler, PermissionRequest};
 use claurst_core::types::ToolDefinition;
+use claurst_core::password_store::PasswordStore;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -52,6 +53,7 @@ pub mod team_tool;
 pub mod remote_trigger;
 pub mod formatter;
 pub mod monitor_tool;
+pub mod playwright;
 
 // Re-exports for convenience.
 pub use formatter::try_format_file;
@@ -90,6 +92,7 @@ pub use synthetic_output::SyntheticOutputTool;
 pub use team_tool::{TeamCreateTool, TeamDeleteTool, register_agent_runner, AgentRunFn};
 pub use remote_trigger::RemoteTriggerTool;
 pub use monitor_tool::MonitorTool;
+pub use playwright::PlaywrightTool;
 
 // ---------------------------------------------------------------------------
 // Core trait & types
@@ -241,6 +244,8 @@ pub struct ToolContext {
     /// Optional notifier for injecting completion messages into the next agent turn.
     /// Set when the query loop has a command queue wired up.
     pub completion_notifier: Option<CompletionNotifier>,
+    /// Password store for credential management.
+    pub password_store: Option<Arc<dyn claurst_core::PasswordStore>>,
 }
 
 impl ToolContext {
@@ -402,6 +407,7 @@ pub fn all_tools() -> Vec<Box<dyn Tool>> {
         Box::new(McpAuthTool),
         Box::new(RemoteTriggerTool),
         Box::new(MonitorTool),
+        Box::new(PlaywrightTool::new()),
         // Computer Use is only available when compiled with the feature flag.
         #[cfg(feature = "computer-use")]
         Box::new(computer_use::ComputerUseTool),
@@ -556,6 +562,7 @@ mod tests {
             config: Config::default(),
             managed_agent_config: None,
             completion_notifier: None,
+            password_store: None,
         };
 
         // Absolute paths pass through unchanged
@@ -586,6 +593,7 @@ mod tests {
             config: Config::default(),
             managed_agent_config: None,
             completion_notifier: None,
+            password_store: None,
         };
 
         // Relative paths get joined with working_dir

@@ -12,15 +12,15 @@ Claurst is a multi-provider terminal coding agent written in Rust. The workspace
 | `claurst-core` | Shared types, config, provider IDs, error types |
 | `claurst-api` | Provider adapters (LlmProvider trait), model registry, E2EE crypto |
 | `claurst-query` | Query loop, agent tool, orchestration |
-| `claurst-tools` | Tool definitions (file edit, bash, etc.) |
+| `claurst-tools` | Tool definitions (file edit, bash, playwright, etc.) |
 | `claurst-tui` | Terminal UI |
 | `claurst-commands` | Slash commands |
 | `claurst-bridge` | Bridge layer |
 | `claurst-acp` | Agent communication protocol |
 | `claurst-buddy` | Rustle companion |
+| `claurst-cli` | CLI argument parsing |
 | `claurst-mcp` | Model Context Protocol |
 | `claurst-plugins` | Plugin system |
-| `claurst-cli` | CLI argument parsing |
 
 ## Build & Check Commands
 
@@ -39,13 +39,169 @@ cargo check --package claurst-api
 # Run tests
 cargo test
 
+# Run password store tests specifically
+cargo test --package claurst-core password_store
+
 # Build release binary
 cargo build --release --package claurst
 ```
 
 Always run `cargo check` after making changes to verify compilation.
 
-## Chutes E2EE Provider — Current Status
+## Quick Test Commands
+
+**Verify password store works:**
+```bash
+cd src-rust
+cargo test --package claurst-core password_store -- --nocapture
+```
+
+**Test Playwright tool:**
+```bash
+cd src-rust
+cargo test --package claurst-tools --lib playwright --nocapture
+```
+
+**Full workspace check:**
+```bash
+cd src-rust && cargo check --workspace
+```
+
+## Playwright Browser Automation Tool — NEW ✅
+
+### What's implemented
+
+Native **Playwright** browser automation tool fully integrated into claurst's tool system.
+
+**Files:**
+- `src-rust/crates/tools/src/playwright.rs` — Complete PlaywrightTool implementation
+- `src-rust/crates/tools/Cargo.toml` — Added `playwright-rs = "0.12"` dependency
+- `src-rust/crates/tools/src/lib.rs` — Module export and tool registration
+
+### Tool Capabilities
+
+Implements `Tool` trait for browser automation:
+
+**Actions:**
+-  **`launch`**  : Start browser → `{"context_id": "browser_xxx"}`
+-  **`navigate`**  : URL navigation
+-  **`click`**  : Click by CSS selector
+-  **`fill`**  : Fill form fields
+-  **`text`**  : Extract element text
+-  **`screenshot`**  : Capture base64 screenshot
+-  **`close`**  : Cleanup
+
+**Architecture:**
+- Async with tokio
+- Permissions: `PermissionLevel::ReadOnly`
+- Error handling via `ToolResult`
+- Static browser map per session using `dashmap::DashMap`
+- Browser state: `BrowserState { browser, context, page }`
+
+### Integration Points
+
+```rust
+// Tool registration (lib.rs:all_tools())
+Box::new(PlaywrightTool::new()),
+
+// Re-export
+pub use playwright::PlaywrightTool;
+
+// Module declaration
+pub mod playwright;
+playwright.rs:1
+```
+
+### Dependencies
+
+```toml
+[dependencies]
+playwright-rs = "0.12"
+uuid = "1"  # for session IDs
+base64 = "0.22"  # for screenshot encoding
+```
+
+### Requirements
+
+**Browser Installation:**
+```bash
+npx playwright@1.59.1 install chromium
+```
+
+The version must match `playwright-rs = "0.12"`.
+
+### Usage in Agent Flow
+
+1. Agent calls `playwright` with `action: "launch"` → receives `context_id`
+2. Subsequent calls include `context_id` for navigation, clicks, etc.
+3. Screenshot returns base64 for display/verification
+4. Clean close releases resources
+
+### Testing
+
+```rust
+#[tokio::test]
+async fn test_playwright_launch_and_close() {
+    // Verifies: launch → close cycle
+    // ✅ Passes
+}
+
+#[tokio::test]
+async fn test_playwright_tool_name() {
+    // Verifies: name = "playwright", permissions = ReadOnly
+    // ✅ Passes
+}
+```
+
+**Test results:**
+- Simple tests (name, launch/close): ✅ PASS
+- Full workflow test (navigate → text → screenshot → close): ⚠️ Long-running
+
+### Known Limitations
+
+- **Screenshot options**: Currently uses `page.screenshot(None)` — full options support needs research
+- **Locator options**: Click/fill use default options (`None`)
+- **Webkit persistent contexts**:  ❌ Known upstream issue on Windows ([microsoft/playwright#36936](https://github.com/microsoft/playwright/issues/36936))
+- **Usage stats**: Token counts may return zeros (Chutes API quirk, non-critical)
+
+### Integration Completeness Check
+
+**Completed:**
+- ✅ Tool struct and trait implementation
+- ✅ Tool registration in `all_tools()`
+- ✅ Module export and re-export
+- ✅ Browser lifecycle management (launch/close)
+- ✅ Navigation and interaction (click/fill/text)
+- ✅ Screenshot capture
+- ✅ Test infrastructure
+- ✅ Documentation (README.md, AGENTS.md)
+
+**Outstanding:**
+- ⏳ Add `pty_bash.rs` integration for PTY mode
+- ⏳ Support for `web_fetch.rs` / `web_search.rs` (fetch browser screenshots/info)
+- ⏳ Persistent context options (e.g., storage state, viewport)
+- ⏳ Multi-context management (concurrent browsers)
+- ⏳ Clip region and full-page screenshot options
+- ⏳ Headless mode configuration
+- ⏳ Cross-browser testing (Firefox, WebKit) verification
+
+### Code Reference
+
+```rust
+// Tool definition: crates/tools/src/playwright.rs:52
+// Execute method: crates/tools/src/playwright.rs:84
+// Browser state: crates/tools/src/playwright.rs:280
+// Launch impl: crates/tools/src/playwright.rs:185
+// Screenshot impl: crates/tools/src/playwright.rs:255
+```
+
+**Key patterns to follow:**
+- Use `dashmap::DashMap` for static state (see `get_browser_map()`)
+- Return `ToolResult` with JSON metadata
+- Use `playwright_rs::Playwright::launch()` pattern
+- Pass `None` for optional parameters until full support
+
+## Chutes E2EE Provider
 
 ### What's implemented
 
@@ -125,6 +281,132 @@ Results (Apr 2026):
 - **Unit test bugs fixed**: `KyberPublicKey::from_bytes` → `KyberCiphertext::from_bytes` for decapsulation, `Hkdf::new(salt, ...)` → `Hkdf::new(Some(salt), ...)`, added `use base64::Engine` import.
 - **Stream roundtrip test**: Added `stream_roundtrip` test covering stream init (e2e_init) and chunk encryption/decryption.
 
+## Domain-Aware Password Store
+
+### What's implemented
+
+Native domain-aware password placeholder system integrated with ripasso/pass-compatible GPG stores. Passwords remain as placeholders in LLM prompts and UI, only replaced at HTTP layer for matching domains.
+
+**Core Files:**
+
+- `src-rust/crates/core/src/password_store.rs` — Full implementation
+  - `PasswordReference`: Parses `{{pass:domain:secret[:mode[:field]]}}`
+  - `PasswordStoreConfig`: Serializable config (`store_path`, `signing_key`, `require_git`)
+  - `PasswordStore` trait: `get_password()`, `get_full_secret()`, `get_field()`, `exists()`, `list_entries()`
+  - `replace_placeholders(text, store, domain)` — Domain-aware replacement
+  - `extract_placeholders(text)` — Returns Vec<PasswordReference>
+  - `has_domain_placeholders(text, domain)` — Quick mismatch check
+  - `NullPasswordStore` — Fallback for unconfigured state
+  - 21 unit tests covering parsing, replacement, and security guarantees
+
+**Infrastructure Integration:**
+
+- `src-rust/crates/core/src/lib.rs:962` — `password_store: PasswordStoreConfig` added to `Config`
+- `src-rust/crates/core/src/lib.rs:1578-1582` — Merge logic for `Settings` with `store_path`, `signing_key`, `require_git`
+- `src-rust/crates/core/src/lib.rs:230` — Public exports: `PasswordStore`, `PasswordStoreConfig`, `PasswordStoreError`, `NullPasswordStore`, `PasswordReference`, `ReplacementMode`, `replace_placeholders`, `extract_placeholders`, `has_domain_placeholders`
+- `src-rust/crates/api/src/password_utils.rs` — HTTP layer helpers (`replace_passwords_in_payload()`, `extract_domain_from_url()`)
+
+**Tool Integration:**
+
+- `src-rust/crates/tools/src/lib.rs:246` — `ToolContext` struct gains `password_store: Option<Arc<dyn claurst_core::PasswordStore>>`
+- `src-rust/crates/tools/src/bash.rs:19-51` — `replace_passwords_in_command()` helper extracts domains from URLs, calls `replace_placeholders()` per domain
+- `src-rust/crates/tools/src/bash.rs:429,444` — Both background and foreground execution paths use replaced commands
+
+**CLI Initialization:**
+
+- `src-rust/crates/cli/src/main.rs:616-648` — Initializes password store from `config.password_store.store_path` or `PASSWORD_STORE_DIR` env var
+- Wraps in `Option<Arc<dyn PasswordStore>>` and passes to `ToolContext`
+
+### Usage Model
+
+**Reference Format:**
+```
+{{pass:domain:secret-path[:mode[:field]]}}
+```
+
+**Security Model (Two-Phase):**
+
+1. **Phase 1 - Agent/LLM**: Sees only placeholders
+   ```
+   User prompt: "Deploy to {{pass:api.staging.com:deploy-token}}"
+   LLM prompt: "Deploy to {{pass:api.staging.com:deploy-token}}"
+   UI display: "Deploy to {{pass:api.staging.com:deploy-token}}"
+   ```
+
+2. **Phase 2 - HTTP Execution**: Real replacement only for matching domain
+   ```
+   Command: curl -H "Authorization: Bearer {{pass:api.staging.com:deploy-token}}" https://api.staging.com/deploy
+   ```
+   Becomes:
+   ```
+   curl -H "Authorization: Bearer xK9m..." https://api.staging.com/deploy
+   ```
+   When sent to `api.other.com`: still shows placeholder (not replaced)
+
+**Domain Extraction:**
+- URLs in commands: `https?://([a-zA-Z0-9.-]+)` extracts domain
+- HTTP requests: parsed from request URL/builder
+
+**Store Configuration:**
+```toml
+[password_store]
+store_path = "/home/user/.password-store"
+signing_key = "user@example.com"  # optional
+require_git = true                # optional
+```
+
+**Null Store (Default):**
+- If not configured, `NullPasswordStore` returns placeholders unchanged
+- No errors, graceful fallback behavior
+
+### PasswordStore Trait
+
+```rust
+pub trait PasswordStore: Send + Sync {
+    fn get_password(&self, path: &str) -> Result<String, PasswordStoreError>;
+    fn get_full_secret(&self, path: &str) -> Result<String, PasswordStoreError>;
+    fn get_field(&self, path: &str, field: &str) -> Result<String, PasswordStoreError>;
+    fn exists(&self, path: &str) -> Result<bool, PasswordStoreError>;
+    fn list_entries(&self) -> Result<Vec<PasswordEntry>, PasswordStoreError>;
+}
+```
+
+**Reference Implementation:**
+- Planned: `GpgPasswordStore` using system `gpg` command
+- Would parse `.gpg` files from store directory
+- Use `gpg --decrypt` for reading, `gpg --encrypt` for writing
+- No Rust crypto dependencies required
+
+### Unit Tests (21 tests, all passing)
+
+- Parsing: `{{pass:domain:secret}}`, `{{pass:domain:secret:full}}`, `{{pass:domain:secret:field:password}}`
+- Domain isolation: replacement only for matching domain
+- Extract placeholders from text
+- Malformed handling, edge cases
+- Security: no unintended replacements
+
+### Next Steps (Outstanding)
+
+1. **GpgPasswordStore implementation** — System command wrapper for real password operations
+2. **Integration with other HTTP tools** — `web_fetch.rs`, `web_search.rs` need password replacement
+3. **pty_bash.rs** — Similar integration to bash.rs for PTY mode
+4. **Chutes E2EE edge case** — If passwords affect TEE provider payloads, may need special handling (per user: not needed for now)
+
+### Integration Completeness Check
+
+**Completed:**
+- ✅ Core module with structs, traits, functions, tests
+- ✅ Config struct addition and merge logic
+- ✅ ToolContext struct with password_store field
+- ✅ Bash tool integration (background + foreground)
+- ✅ CLI initialization and ToolContext construction
+- ✅ HTTP utility functions in password_utils.rs
+
+**Outstanding:**
+- ⏳ `pty_bash.rs` execution paths
+- ⏳ `web_fetch.rs` / `web_search.rs` HTTP layers
+- ⏳ Physical GPG implementation (Mock available, `NullPasswordStore` for fallback)
+
 ### pqcrypto API notes
 
 - `from_bytes()` and `as_bytes()` are trait methods on `pqcrypto_traits::kem::{PublicKey, Ciphertext, SharedSecret}`, NOT inherent methods. Always import the trait.
@@ -147,5 +429,17 @@ Results (Apr 2026):
 
 - `LlmProvider` (`claurst-api/src/provider.rs`) — all providers implement this
 - `SlashCommand` (`claurst-commands/`) — slash commands implement this
+- `PasswordStore` (`claurst-core/src/password_store.rs`) — password storage implementation
+- `Tool` (`claurst-tools/src/lib.rs`) — all tools implement this ✅ **PlaywrightTool added**
 - Provider registration in `claurst-api/src/registry.rs`
 - Model registry in `claurst-api/src/model_registry.rs`
+
+## Code References Pattern
+
+When referencing specific functions or code locations, use the format `file_path:line_number` to allow easy navigation:
+
+- Playwright tool implementation: `crates/tools/src/playwright.rs`
+- Password replacement in bash tool: `crates/tools/src/bash.rs:429`
+- Password store config in core: `crates/core/src/lib.rs:962`
+- CLI initialization: `crates/cli/src/main.rs:616-648`
+- Password utilities: `crates/api/src/password_utils.rs`
