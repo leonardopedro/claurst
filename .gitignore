@@ -18,3 +18,5 @@ refs/
 .vscode/
 .claurst/
 
+node_modules/
+

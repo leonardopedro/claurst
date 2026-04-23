@@ -22,14 +22,26 @@
   ],
   "remoteEnv": {
     "GNUPGHOME": "/home/vscode/.gnupg",
-    "PATH": "${containerWorkspaceFolder}/src-rust/target/debug:${containerWorkspaceFolder}/src-rust/target/release:${containerEnv:PATH}"
+    "PATH": "${containerWorkspaceFolder}/src-rust/target/debug:${containerWorkspaceFolder}/src-rust/target/release:${containerEnv:PATH}",
+    "LANG": "pt_PT.UTF-8",
+    "LC_ALL": "pt_PT.UTF-8",
+    "LANGUAGE": "pt_PT:pt"
   },
   "postCreateCommand": "mkdir -p /home/vscode/.gnupg && chmod 700 /home/vscode/.gnupg && sudo chown -R vscode:vscode /usr/local/cargo && sudo chown -R vscode:vscode /workspaces",
   "customizations": {
     "vscode": {
       "extensions": [],
       "settings": {
-        "terminal.integrated.inheritEnv": true
+        "terminal.integrated.inheritEnv": true,
+        "keyboard.layout": "pt",
+        "keyboard.dispatch": "keyCode",
+        "terminal.integrated.profiles.linux": {
+          "bash": {
+            "path": "/bin/bash",
+            "args": ["-c", "export LANG=pt_PT.UTF-8; export LC_ALL=pt_PT.UTF-8; export LANGUAGE=pt_PT:pt; exec bash -l"]
+          }
+        },
+        "terminal.integrated.defaultProfile.linux": "bash"
       }
     }
   }

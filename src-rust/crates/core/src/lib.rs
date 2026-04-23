@@ -65,6 +65,20 @@ pub use ide::{IdeKind, detect_ide};
 pub mod update_check;
 pub use update_check::{check_for_updates, UpdateInfo};
 
+/// Password store integration using ripasso (pass format) with domain isolation.
+/// 
+/// This module provides password storage using the pass/ ripasso format.
+/// Placeholders must include domain: `{{pass:example.com:secret}}`.
+/// Passwords are ONLY replaced when sending to the matching domain - never
+/// to LLMs or other destinations. This prevents credential leakage.
+pub mod password_store;
+pub use password_store::{PasswordStore, PasswordStoreConfig, PasswordStoreError, NullPasswordStore, PasswordReference, ReplacementMode, replace_placeholders, extract_placeholders, has_domain_placeholders};
+
+/// Ripasso-backed password store implementation using system GPG.
+/// Use this to provide real password storage with ripasso/pass compatibility.
+pub mod password_store_ripasso;
+pub use password_store_ripasso::RipassoPasswordStore;
+
 // Re-export commonly used types at the crate root
 pub use error::{ClaudeError, Result};
 pub use types::{
@@ -574,6 +588,7 @@ pub mod config {
     use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
     use std::path::PathBuf;
+    use crate::password_store::PasswordStoreConfig;
 
     // ---- Hook configuration ----------------------------------------------
 
@@ -942,6 +957,9 @@ pub mod config {
         /// Managed agent (manager-executor) configuration.
         #[serde(default)]
         pub managed_agents: Option<ManagedAgentConfig>,
+        /// Password store configuration.
+        #[serde(default)]
+        pub password_store: PasswordStoreConfig,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -1556,6 +1574,11 @@ pub mod config {
                     SkillsConfig { paths, urls }
                 },
                 managed_agents: over.config.managed_agents.or(base.config.managed_agents),
+                password_store: PasswordStoreConfig {
+                    store_path: over.config.password_store.store_path.or(base.config.password_store.store_path),
+                    signing_key: over.config.password_store.signing_key.or(base.config.password_store.signing_key),
+                    require_git: over.config.password_store.require_git || base.config.password_store.require_git,
+                },
             };
             Self {
                 config: merged_config,

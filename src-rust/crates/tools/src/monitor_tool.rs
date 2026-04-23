@@ -268,6 +268,7 @@ mod tests {
             config: Config::default(),
             managed_agent_config: None,
             completion_notifier: None,
+            password_store: None,
         }
     }
 }

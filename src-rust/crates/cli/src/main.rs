@@ -36,10 +36,11 @@ use claurst_core::{
     constants::APP_VERSION,
     context::ContextBuilder,
     cost::CostTracker,
+    password_store::{replace_placeholders, NullPasswordStore, PasswordStore},
     permissions::{AutoPermissionHandler, InteractivePermissionHandler},
 };
 use async_trait::async_trait;
-use claurst_core::types::ToolDefinition;
+use claurst_core::{password_store_ripasso::RipassoPasswordStore, types::ToolDefinition};
 use claurst_tools::{PermissionLevel, Tool, ToolContext, ToolResult};
 use clap::{ArgAction, Parser, ValueEnum};
 use parking_lot::Mutex as ParkingMutex;
@@ -611,22 +612,47 @@ async fn main() -> anyhow::Result<()> {
     let current_turn = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     // Initialize MCP servers first (needed for ToolContext.mcp_manager).
-    let mcp_manager_arc = connect_mcp_manager_arc(&config).await;
+        let mcp_manager_arc = connect_mcp_manager_arc(&config).await;
 
-    let tool_ctx = ToolContext {
-        working_dir: cwd.clone(),
-        permission_mode: config.permission_mode.clone(),
-        permission_handler: permission_handler.clone(),
-        cost_tracker: cost_tracker.clone(),
-        session_id: session_id.clone(),
-        file_history: file_history.clone(),
-        current_turn: current_turn.clone(),
-        non_interactive: cli.print || cli.prompt.is_some(),
-        mcp_manager: mcp_manager_arc.clone(),
-        config: config.clone(),
-        managed_agent_config: config.managed_agents.clone(),
-        completion_notifier: None,
-    };
+        // Initialize password store
+        let password_store: Option<Arc<dyn claurst_core::PasswordStore>> = 
+            if config.password_store.store_path.is_some() {
+                match RipassoPasswordStore::new(
+                    config.password_store.store_path.clone().unwrap()
+                ) {
+                    Ok(store) => Some(Arc::new(store)),
+                    Err(e) => {
+                        warn!("Failed to initialize password store: {}", e);
+                        None
+                    }
+                }
+            } else {
+                // Also check PASSWORD_STORE_DIR env var as fallback
+                if let Ok(store_dir) = std::env::var("PASSWORD_STORE_DIR") {
+                    match RipassoPasswordStore::new(store_dir) {
+                        Ok(store) => Some(Arc::new(store)),
+                        Err(_) => None,
+                    }
+                } else {
+                    None
+                }
+            };
+
+        let tool_ctx = ToolContext {
+            working_dir: cwd.clone(),
+            permission_mode: config.permission_mode.clone(),
+            permission_handler: permission_handler.clone(),
+            cost_tracker: cost_tracker.clone(),
+            session_id: session_id.clone(),
+            file_history: file_history.clone(),
+            current_turn: current_turn.clone(),
+            non_interactive: cli.print || cli.prompt.is_some(),
+            mcp_manager: mcp_manager_arc.clone(),
+            config: config.clone(),
+            managed_agent_config: config.managed_agents.clone(),
+            completion_notifier: None,
+            password_store: password_store.clone(),
+        };
 
     // Register the cc-query-backed agent runner so TeamCreateTool can spawn real
     // sub-agents.  Must be called before any tool execution begins.

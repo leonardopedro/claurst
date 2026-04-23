@@ -14,7 +14,43 @@ use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tracing::debug;
+use tracing::{debug, warn};
+
+/// Replace password placeholders in a command if it contains URLs matching configured domains
+fn replace_passwords_in_command(ctx: &ToolContext, command: &str) -> String {
+    use claurst_core::password_store::replace_placeholders;
+    
+    let store = match &ctx.password_store {
+        Some(s) => s.as_ref(),
+        None => return command.to_string(),
+    };
+    
+    // Find all URLs in the command (simple pattern)
+    let url_pattern = Regex::new(r"(https?://([a-zA-Z0-9.-]+))").unwrap();
+    let mut result = command.to_string();
+    
+    // Find unique domains in the command
+    let domains: Vec<String> = url_pattern.captures_iter(command)
+        .filter_map(|cap| cap.get(2).map(|m| m.as_str().to_string()))
+        .collect();
+    
+    // For each domain found, try to replace placeholders
+    for domain in domains {
+        match replace_placeholders(&result, store, &domain) {
+            Ok(new_result) => {
+                if new_result != result {
+                    debug!("Replaced passwords for domain: {}", domain);
+                    result = new_result;
+                }
+            }
+            Err(e) => {
+                warn!("Failed to replace passwords for domain {}: {}", domain, e);
+            }
+        }
+    }
+    
+    result
+}
 
 /// Sentinel appended to the shell wrapper script.  Everything printed after
 /// this marker is metadata (final pwd + env dump) rather than user-visible output.
@@ -391,8 +427,9 @@ impl Tool for BashTool {
                 let state = shell_state_arc.lock();
                 state.cwd.clone().unwrap_or_else(|| ctx.working_dir.clone())
             };
+            let command = replace_passwords_in_command(ctx, params.command.as_str());
             return run_in_background(
-                params.command,
+                command,
                 cwd,
                 timeout_ms,
                 params.notify_on_complete,
@@ -403,17 +440,20 @@ impl Tool for BashTool {
         // ── Foreground path ──────────────────────────────────────────────────
         let timeout_dur = Duration::from_millis(timeout_ms);
 
-        debug!(command = %params.command, "Executing bash command");
+        // Replace password placeholders before execution
+        let command_with_secrets = replace_passwords_in_command(ctx, params.command.as_str());
+        
+        debug!(command = %command_with_secrets, "Executing bash command");
 
         // On Windows fall back to a simpler cmd invocation without state wrapping.
         if cfg!(windows) {
-            return self.execute_windows(&params.command, ctx, &shell_state_arc, timeout_dur, timeout_ms).await;
+            return self.execute_windows(&command_with_secrets, ctx, &shell_state_arc, timeout_dur, timeout_ms).await;
         }
 
         // Build a wrapper script that restores and then captures shell state.
         let script = {
             let state = shell_state_arc.lock();
-            build_wrapper_script(&params.command, &state, &ctx.working_dir)
+            build_wrapper_script(&command_with_secrets, &state, &ctx.working_dir)
         };
 
         let mut child = match Command::new("bash")
