@@ -241,6 +241,7 @@ impl Tool for AgentTool {
                 api_base: ctx.config.resolve_anthropic_api_base(),
                 ..Default::default()
             },
+            None, // Password store not available in sub-agent context
         );
         let model_registry = Arc::new(build_model_registry());
 
@@ -581,6 +582,7 @@ pub fn init_team_swarm_runner() {
                         api_base: ctx.config.resolve_anthropic_api_base(),
                         ..Default::default()
                     },
+                    None, // Password store not available in sub-agent context
                 );
                 let model_registry = Arc::new(build_model_registry());
 

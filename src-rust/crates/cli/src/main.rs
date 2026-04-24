@@ -36,8 +36,8 @@ use claurst_core::{
     constants::APP_VERSION,
     context::ContextBuilder,
     cost::CostTracker,
-    password_store::{replace_placeholders, NullPasswordStore, PasswordStore},
     permissions::{AutoPermissionHandler, InteractivePermissionHandler},
+    resolve_password_value,
 };
 use async_trait::async_trait;
 use claurst_core::{password_store_ripasso::RipassoPasswordStore, types::ToolDefinition};
@@ -530,6 +530,42 @@ async fn main() -> anyhow::Result<()> {
     // Determine mode early (needed for auth error handling and permission handler selection).
     let is_headless = cli.print || cli.prompt.is_some();
 
+    // Initialize password store early so it can resolve API key placeholders
+    let password_store: Option<Arc<dyn claurst_core::PasswordStore>> = 
+        if config.password_store.store_path.is_some() {
+            match RipassoPasswordStore::new(
+                config.password_store.store_path.clone().unwrap()
+            ) {
+                Ok(store) => Some(Arc::new(store)),
+                Err(e) => {
+                    warn!("Failed to initialize password store: {}", e);
+                    None
+                }
+            }
+        } else {
+            // Also check PASSWORD_STORE_DIR env var as fallback
+            if let Ok(store_dir) = std::env::var("PASSWORD_STORE_DIR") {
+                match RipassoPasswordStore::new(store_dir) {
+                    Ok(store) => Some(Arc::new(store)),
+                    Err(_) => None,
+                }
+            } else {
+                None
+            }
+        };
+
+    // Helper to resolve API key with password store if provided
+    let resolve_api_key_with_password = |key: String, store: &Option<Arc<dyn claurst_core::PasswordStore>>| -> String {
+        if let Some(store_ref) = store {
+            match claurst_core::resolve_password_value(&key, store_ref.as_ref()) {
+                Ok(resolved) => resolved,
+                Err(_) => key, // Fall back to original on error
+            }
+        } else {
+            key
+        }
+    };
+
     // Initialize API client.
     // Try config/env first; fall back to saved OAuth tokens.
     // If no Anthropic credentials are found, check whether any other provider is
@@ -539,7 +575,7 @@ async fn main() -> anyhow::Result<()> {
     let active_provider = config.selected_provider_id();
     let (api_key, use_bearer_auth) = if active_provider == "anthropic" {
         match config.resolve_anthropic_auth_async().await {
-            Some(auth) => auth,
+            Some((k, u)) => (resolve_api_key_with_password(k, &password_store), u),
             None => {
                 if is_headless {
                     anyhow::bail!(
@@ -576,7 +612,11 @@ async fn main() -> anyhow::Result<()> {
     // Anthropic is always the default; additional providers (OpenAI, Google,
     // Bedrock, Azure, Copilot, Cohere, local providers) are registered when
     // their respective environment variables or auth store entries are found.
-    let provider_registry = claurst_api::ProviderRegistry::from_config(&config, client_config);
+    let provider_registry = claurst_api::ProviderRegistry::from_config(
+        &config, 
+        client_config,
+        password_store.clone(),
+    );
 
     let bridge_config = resolve_bridge_config(&settings, &api_key, use_bearer_auth, is_headless);
     if let Some(cfg) = bridge_config.as_ref() {
@@ -613,30 +653,6 @@ async fn main() -> anyhow::Result<()> {
 
     // Initialize MCP servers first (needed for ToolContext.mcp_manager).
         let mcp_manager_arc = connect_mcp_manager_arc(&config).await;
-
-        // Initialize password store
-        let password_store: Option<Arc<dyn claurst_core::PasswordStore>> = 
-            if config.password_store.store_path.is_some() {
-                match RipassoPasswordStore::new(
-                    config.password_store.store_path.clone().unwrap()
-                ) {
-                    Ok(store) => Some(Arc::new(store)),
-                    Err(e) => {
-                        warn!("Failed to initialize password store: {}", e);
-                        None
-                    }
-                }
-            } else {
-                // Also check PASSWORD_STORE_DIR env var as fallback
-                if let Ok(store_dir) = std::env::var("PASSWORD_STORE_DIR") {
-                    match RipassoPasswordStore::new(store_dir) {
-                        Ok(store) => Some(Arc::new(store)),
-                        Err(_) => None,
-                    }
-                } else {
-                    None
-                }
-            };
 
         let tool_ctx = ToolContext {
             working_dir: cwd.clone(),
@@ -937,12 +953,42 @@ async fn refresh_provider_runtime_state(
     config.provider = None;
     config.model = None;
 
+    // Initialize password store so API keys can be resolved
+    let password_store: Option<Arc<dyn claurst_core::PasswordStore>> = 
+        if config.password_store.store_path.is_some() {
+            match claurst_core::password_store_ripasso::RipassoPasswordStore::new(
+                config.password_store.store_path.clone().unwrap()
+            ) {
+                Ok(store) => Some(Arc::new(store)),
+                Err(_) => None,
+            }
+        } else {
+            if let Ok(store_dir) = std::env::var("PASSWORD_STORE_DIR") {
+                match claurst_core::password_store_ripasso::RipassoPasswordStore::new(store_dir) {
+                    Ok(store) => Some(Arc::new(store)),
+                    Err(_) => None,
+                }
+            } else {
+                None
+            }
+        };
+
     let (api_key, use_bearer_auth) = config
         .resolve_anthropic_auth_async()
         .await
+        .map(|(k, u)| {
+            if let Some(store) = &password_store {
+                match resolve_password_value(&k, store.as_ref()) {
+                    Ok(resolved) => (resolved, u),
+                    Err(_) => (k, u),
+                }
+            } else {
+                (k, u)
+            }
+        })
         .unwrap_or((String::new(), false));
     let client_config = claurst_api::client::ClientConfig {
-        api_key,
+        api_key: api_key.clone(),
         api_base: config.resolve_anthropic_api_base(),
         use_bearer_auth,
         ..Default::default()
@@ -952,7 +998,7 @@ async fn refresh_provider_runtime_state(
             .context("Failed to rebuild Anthropic client")?,
     );
     let provider_registry =
-        Arc::new(claurst_api::ProviderRegistry::from_config(&config, client_config));
+        Arc::new(claurst_api::ProviderRegistry::from_config(&config, client_config, password_store));
     let model_registry = load_cached_model_registry();
 
     spawn_models_cache_refresh();

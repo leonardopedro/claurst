@@ -377,6 +377,36 @@ pub trait PasswordStore: Send + Sync {
 - Use `gpg --decrypt` for reading, `gpg --encrypt` for writing
 - No Rust crypto dependencies required
 
+### API Key Resolution (New)
+
+**Purpose:** Allow provider API keys to be stored in password store without exposing them in config files.
+
+**How it works:**
+1. Password store is initialized BEFORE provider registry in CLI main flow
+2. API keys in config or env can be placeholders: `"anthropic:api-key"` or `"pass:anthropic/api-key"`
+3. `resolve_password_value()` helper resolves these before provider creation
+4. Flow: `config.resolve_provider_api_key()` → `resolve_password_value()` → actual key
+
+**Integration Points:**
+- `crates/core/src/password_store.rs:283-326` — `resolve_password_value()` function
+- `crates/core/src/lib.rs:75` — Exported from core crate
+- `crates/cli/src/main.rs:538-616` — Initialize password store early
+- `crates/cli/src/main.rs:564-579` — Use resolution function on api_key
+- `crates/api/src/registry.rs:87-120` — Pass password store to `provider_from_config()`
+- `crates/api/src/registry.rs:332-353` — Pass password store to `from_config()` for all providers
+- `crates/query/src/lib.rs:999-1008` — Pass tool_ctx password_store to dynamic provider resolution
+
+**Example Usage:**
+```toml
+# config.toml
+api_key = "anthropic:api-key"  # Key stored at ~/.password-store/anthropic/api-key.gpg
+```
+
+```bash
+# Or env var
+export ANTHROPIC_API_KEY=pass:anthropic/api-key
+```
+
 ### Unit Tests (21 tests, all passing)
 
 - Parsing: `{{pass:domain:secret}}`, `{{pass:domain:secret:full}}`, `{{pass:domain:secret:field:password}}`
@@ -401,6 +431,9 @@ pub trait PasswordStore: Send + Sync {
 - ✅ Bash tool integration (background + foreground)
 - ✅ CLI initialization and ToolContext construction
 - ✅ HTTP utility functions in password_utils.rs
+- ✅ **API key resolution** — Config/env keys can be `pass:domain:path` or `{pass:domain:path}}` via `resolve_password_value()`
+- ✅ **Provider registry integration** — `from_config()` and `provider_from_config()` accept password store
+- ✅ **CLI main & refresh flows** — Password store initialized early for API key protection
 
 **Outstanding:**
 - ⏳ `pty_bash.rs` execution paths
@@ -443,3 +476,6 @@ When referencing specific functions or code locations, use the format `file_path
 - Password store config in core: `crates/core/src/lib.rs:962`
 - CLI initialization: `crates/cli/src/main.rs:616-648`
 - Password utilities: `crates/api/src/password_utils.rs`
+- API key resolution: `crates/core/src/password_store.rs:283-326` (resolve_password_value)
+- Provider registry with password store: `crates/api/src/registry.rs:87-120` (provider_from_config)
+- CLI auth flow: `crates/cli/src/main.rs:550-572` (resolve_api_key_with_password)

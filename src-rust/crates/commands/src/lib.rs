@@ -151,6 +151,7 @@ async fn provider_for_config(config: &Config) -> Option<std::sync::Arc<dyn claur
                 .is_some_and(|(_, use_bearer)| *use_bearer),
             ..Default::default()
         },
+        None, // Password store not available in this context
     );
 
     provider_lookup_ids(config.selected_provider_id())
@@ -1953,7 +1954,7 @@ impl SlashCommand for DoctorCommand {
             use_bearer_auth: anthropic_auth.1,
             ..Default::default()
         };
-        let provider_registry = claurst_api::ProviderRegistry::from_config(&ctx.config, client_config);
+        let provider_registry = claurst_api::ProviderRegistry::from_config(&ctx.config, client_config, None);
         let provider_id = claurst_core::ProviderId::new(ctx.config.selected_provider_id());
         match provider_registry.get(&provider_id) {
             Some(provider) => match provider.health_check().await {

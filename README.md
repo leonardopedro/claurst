@@ -127,29 +127,6 @@ Playwright tool is a **first-class tool** in claurst's toolset:
 
 Claurst includes native domain-aware password placeholders that integrate with existing GPG-encrypted password stores (ripasso/pass-compatible). Passwords remain as placeholders in prompts and UI, and are only replaced at the HTTP layer when sending requests to matching domains.
 
-### Usage
-
-```bash
-# Configure password store location
-export PASSWORD_STORE_DIR="$HOME/.password-store"
-
-# Use placeholders in your prompts
-"Deploy to {{pass:api.staging.com:deploy-token}} and test the endpoint"
-
-"Generate a PR using {{pass:github.com/github-token}} for auth"
-
-#"The API key for {{pass:api.example.com:api-key}} is shown only to api.example.com"
-```
-
-### Security Model
-
-| Layer | What happens | Example |
-|-------|--------------|---------|
-| **LLM/Agent** | Only sees placeholders | `{{pass:api.staging.com:deploy-token}}` |
-| **UI/CLI** | Shows placeholders | User sees `{{pass:api.staging.com:deploy-token}}` |
-| **HTTP Tool** | Replaces ONLY for matching domain | Becomes `xK9m...` when sending to `api.staging.com` |
-| **Other domains** | Still shows placeholder | `{{pass:api.staging.com:deploy-token}}` when curling `api.other.com` |
-
 ### Reference Format
 
 ```
@@ -158,26 +135,84 @@ export PASSWORD_STORE_DIR="$HOME/.password-store"
 
 - `domain` - Required. Only matching HTTP requests get real values
 - `secret-path` - Path in password store (e.g., `api/api-key` → `~/.password-store/api/api-key.gpg`)
-- `mode` (optional): `first-line` (default), `full`, `field`
+- `mode` (optional): `password` (default, first line), `full`, `field`
 - `field` (optional): Field name for `field` mode (e.g., `{{pass:example.com:service-cred:field:password}}`)
+
+### Usage in Prompts
+
+```bash
+# Configure password store location
+export PASSWORD_STORE_DIR="$HOME/.password-store"
+
+# User prompt - sees placeholders only
+"Deploy to {{pass:api.staging.com:deploy-token}} and test"
+
+# What LLM sees - same placeholders
+"User requested: Deploy to {{pass:api.staging.com:deploy-token}}"
+
+# What gets sent to matching domain - real value
+curl -H "Authorization: Bearer AKIA-SECRET..." https://api.staging.com/deploy
+```
+
+### Usage for API Keys
+
+You can also store your provider API keys in the password store:
+
+```bash
+# Store your API key
+echo "sk-ant-..." | pass insert anthropic/api-key
+
+# In config, use placeholder
+# ~/.config/claurst/config.toml
+api_key = "anthropic:api-key"
+```
+
+Or use environment variables directly:
+```bash
+export ANTHROPIC_API_KEY=pass:anthropic/api-key
+```
+
+The API key placeholder will be resolved when initializing the provider.
+
+### Security Model
+
+| Layer | What happens | Example |
+|-------|--------------|---------|
+| **LLM/Agent** | Only sees placeholders | `{{pass:api.staging.com:deploy-token}}` |
+| **UI/CLI** | Shows placeholders | User sees `{{pass:api.staging.com:deploy-token}}` |
+| **HTTP Tool** | Replaces ONLY for matching domain | Becomes `xK9m...` when sending to `api.staging.com` |
+| **API Key Init** | Resolved at provider creation | `"anthropic:api-key"` → actual key for API |
 
 ### Configuration
 
 ```toml
 # ~/.config/claurst/config.toml
 [password_store]
-store_path = "/home/user/.password-store"
-signing_key = "user@example.com"  # optional, for signing
-require_git = true                # optional, require git repo
+store_path = "/home/user/.password-store"  # defaults to PASSWORD_STORE_DIR
+signing_key = "user@example.com"           # optional, for signing
+require_git = true                         # optional, require git repo
+
+# Can also use placeholders directly
+api_key = "anthropic:api-key"              # resolved at startup
+```
+
+Or use environment variables:
+```bash
+# Set API key as password reference
+export ANTHROPIC_API_KEY="pass:anthropic/api-key"
+
+# Traditional env var still works
+export ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
 ### Implementation
 
-- **Module**: `claurst-core/src/password_store.rs`
-- **HTTP Integration**: Replaces passwords before sending to any domain
-- **Bash Tool**: Automatically replaces in commands that contain URLs
-- **GPG**: Uses system `gpg` command, no Rust crypto dependencies
-- **Zero-knowledge**: Only processes passwords relevant to destination domain
+- **Module**: `crates/core/src/password_store.rs`
+- **Direct Resolution**: `resolve_password_value()` for API keys
+- **HTTP Integration**: Replaces placeholders in commands and payloads
+- **GPG**: Uses system `gpg` command with no Rust crypto dependencies
+- **Zero-knowledge**: Only passwords relevant to destination domain are processed
+- **Fallback**: NullPasswordStore means graceful operation without password store
 
 ## Chutes E2EE Provider
 

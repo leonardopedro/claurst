@@ -87,6 +87,7 @@ fn provider_from_key(provider_id: &str, key: String) -> Option<Arc<dyn LlmProvid
 pub fn provider_from_config(
     config: &claurst_core::config::Config,
     provider_id: &str,
+    password_store: Option<&Arc<dyn claurst_core::PasswordStore>>,
 ) -> Option<Arc<dyn LlmProvider>> {
     let provider_cfg = config.provider_configs.get(provider_id);
     if provider_cfg.is_some_and(|provider| !provider.enabled) {
@@ -95,6 +96,20 @@ pub fn provider_from_config(
 
     let api_key = config.resolve_provider_api_key(provider_id);
     let api_base = resolve_provider_api_base(config, provider_id).filter(|base| !base.is_empty());
+    
+    // Resolve API key through password store if needed
+    let api_key = if let Some(key) = api_key {
+        if let Some(store) = password_store {
+            match claurst_core::resolve_password_value(&key, store.as_ref()) {
+                Ok(resolved) => Some(resolved),
+                Err(_) => Some(key), // Fall back to original on error
+            }
+        } else {
+            Some(key)
+        }
+    } else {
+        None
+    };
 
     use crate::providers;
 
@@ -317,6 +332,7 @@ impl ProviderRegistry {
     pub fn from_config(
         config: &claurst_core::config::Config,
         anthropic_config: ClientConfig,
+        password_store: Option<Arc<dyn claurst_core::PasswordStore>>,
     ) -> Self {
         let mut registry = Self::from_environment_with_auth_store(anthropic_config);
         let active_provider = config.selected_provider_id();
@@ -330,8 +346,9 @@ impl ProviderRegistry {
             configured_provider_ids.push(active_provider.to_string());
         }
 
+        let password_store_ref = password_store.as_ref();
         for provider_id in configured_provider_ids {
-            if let Some(provider) = provider_from_config(config, &provider_id) {
+            if let Some(provider) = provider_from_config(config, &provider_id, password_store_ref) {
                 registry.register(provider);
             }
         }

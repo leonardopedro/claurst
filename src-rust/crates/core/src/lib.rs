@@ -72,7 +72,7 @@ pub use update_check::{check_for_updates, UpdateInfo};
 /// Passwords are ONLY replaced when sending to the matching domain - never
 /// to LLMs or other destinations. This prevents credential leakage.
 pub mod password_store;
-pub use password_store::{PasswordStore, PasswordStoreConfig, PasswordStoreError, NullPasswordStore, PasswordReference, ReplacementMode, replace_placeholders, extract_placeholders, has_domain_placeholders};
+pub use password_store::{PasswordStore, PasswordStoreConfig, PasswordStoreError, NullPasswordStore, PasswordReference, ReplacementMode, replace_placeholders, extract_placeholders, has_domain_placeholders, resolve_password_value};
 
 /// Ripasso-backed password store implementation using system GPG.
 /// Use this to provide real password storage with ripasso/pass compatibility.

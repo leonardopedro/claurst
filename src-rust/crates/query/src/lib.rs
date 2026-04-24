@@ -1001,6 +1001,7 @@ pub async fn run_query_loop(
                     if let Some(overridden) = claurst_api::registry::provider_from_config(
                         &tool_ctx.config,
                         &provider_id_str,
+                        tool_ctx.password_store.as_ref(),
                     ) {
                         provider = Some(overridden);
                     }

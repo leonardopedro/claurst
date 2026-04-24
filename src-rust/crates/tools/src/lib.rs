@@ -8,7 +8,6 @@ use claurst_core::config::PermissionMode;
 use claurst_core::cost::CostTracker;
 use claurst_core::permissions::{PermissionDecision, PermissionHandler, PermissionRequest};
 use claurst_core::types::ToolDefinition;
-use claurst_core::password_store::PasswordStore;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;

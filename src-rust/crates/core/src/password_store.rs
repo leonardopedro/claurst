@@ -240,6 +240,64 @@ pub fn has_domain_placeholders(text: &str, domain: &str) -> bool {
     refs.iter().any(|r#ref| r#ref.domain == domain)
 }
 
+/// Resolve a single password placeholder string (for API keys or other direct values)
+/// 
+/// Takes a placeholder string like "example.com:api-key" or "pass:example.com:api-key"
+/// and returns the resolved value from the password store.
+/// 
+/// If the input doesn't match the placeholder pattern, returns the input unchanged.
+/// This allows safe handling - pass through values that aren't placeholders.
+pub fn resolve_password_value(
+    value: &str, 
+    store: &dyn PasswordStore
+) -> Result<String> {
+    // Support both formats:
+    // 1. "domain:path" - for api_key resolution without {{}} wrapper
+    // 2. "pass:domain:path" - more explicit
+    // 3. Already a placeholder string (without {{}}) with full format
+    
+    let remove_pass_prefix = if value.starts_with("pass:") {
+        &value[5..]  // Remove "pass:" prefix
+    } else {
+        value
+    };
+    
+    // Parse as a reference (without domain filtering requirement)
+    let parts: Vec<&str> = remove_pass_prefix.split(':').collect();
+    
+    if parts.len() < 2 {
+        // Not a password reference, return as-is
+        return Ok(value.to_string());
+    }
+    
+    // Try to parse as PasswordReference
+    match PasswordReference::parse(remove_pass_prefix) {
+        Ok(r#ref) => {
+            // For direct resolution, domain is just metadata - we always resolve
+            match r#ref.mode {
+                ReplacementMode::Password => store.get_password(&r#ref.path),
+                ReplacementMode::Full => store.get_full_secret(&r#ref.path),
+                ReplacementMode::Field => {
+                    if let Some(field) = r#ref.field_name {
+                        store.get_field(&r#ref.path, &field)
+                    } else {
+                        Err(PasswordStoreError::InvalidFormat(
+                            "Field mode requires field_name".to_string()
+                        ))
+                    }
+                }
+                ReplacementMode::Validate => {
+                    Ok(if store.exists(&r#ref.path) { "VALID".to_string() } else { "ERROR: not found".to_string() })
+                }
+            }
+        }
+        Err(_) => {
+            // Not in placeholder format, return unchanged
+            Ok(value.to_string())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
