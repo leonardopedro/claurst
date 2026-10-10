@@ -27,6 +27,7 @@
     "LC_ALL": "pt_PT.UTF-8",
     "LANGUAGE": "pt_PT:pt"
   },
+  "initializeCommand": "mkdir -p ${localWorkspaceFolder}/.claurst",
   "postCreateCommand": "mkdir -p /home/vscode/.gnupg && chmod 700 /home/vscode/.gnupg && sudo chown -R vscode:vscode /usr/local/cargo && sudo chown -R vscode:vscode /workspaces",
   "customizations": {
     "vscode": {

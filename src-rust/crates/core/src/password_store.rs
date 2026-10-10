@@ -6,19 +6,19 @@ use thiserror::Error;
 pub enum PasswordStoreError {
     #[error("Password store not initialized: {0}")]
     NotInitialized(String),
-    
+
     #[error("Password not found: {0}")]
     NotFound(String),
-    
+
     #[error("Invalid placeholder format: {0}")]
     InvalidFormat(String),
-    
+
     #[error("Failed to access password store: {0}")]
     AccessError(String),
-    
+
     #[error("Failed to decrypt password: {0}")]
     DecryptionError(String),
-    
+
     #[error("Field '{0}' not found in secret")]
     FieldNotFound(String),
 }
@@ -60,16 +60,16 @@ impl PasswordReference {
     /// - {{pass:example.com:secret:field:username}} - specific field
     pub fn parse(placeholder: &str) -> Result<Self> {
         let parts: Vec<&str> = placeholder.split(':').collect();
-        
+
         if parts.len() < 2 {
             return Err(PasswordStoreError::InvalidFormat(
-                "expected format: domain:path[:mode[:field]]".to_string()
+                "expected format: domain:path[:mode[:field]]".to_string(),
             ));
         }
-        
+
         let domain = parts[0].to_string();
         let path = parts[1].to_string();
-        
+
         match parts.len() {
             2 => Ok(Self {
                 domain,
@@ -92,9 +92,10 @@ impl PasswordReference {
                         mode: ReplacementMode::Full,
                         field_name: None,
                     }),
-                    _ => Err(PasswordStoreError::InvalidFormat(
-                        format!("unknown mode: {}", mode_str)
-                    )),
+                    _ => Err(PasswordStoreError::InvalidFormat(format!(
+                        "unknown mode: {}",
+                        mode_str
+                    ))),
                 }
             }
             4 => {
@@ -108,12 +109,15 @@ impl PasswordReference {
                         field_name: Some(field_name),
                     })
                 } else {
-                    Err(PasswordStoreError::InvalidFormat(
-                        format!("expected 'field' mode, got: {}", mode_str)
-                    ))
+                    Err(PasswordStoreError::InvalidFormat(format!(
+                        "expected 'field' mode, got: {}",
+                        mode_str
+                    )))
                 }
             }
-            _ => Err(PasswordStoreError::InvalidFormat("too many colons".to_string())),
+            _ => Err(PasswordStoreError::InvalidFormat(
+                "too many colons".to_string(),
+            )),
         }
     }
 }
@@ -135,50 +139,55 @@ impl PasswordStore for NullPasswordStore {
     fn list_entries(&self) -> Result<Vec<String>> {
         Ok(Vec::new())
     }
-    
+
     fn get_password(&self, _path: &str) -> Result<String> {
         Err(PasswordStoreError::NotInitialized(
-            "Password store not configured. Set PASSWORD_STORE_DIR or configure in settings.".to_string()
+            "Password store not configured. Set PASSWORD_STORE_DIR or configure in settings."
+                .to_string(),
         ))
     }
-    
+
     fn get_full_secret(&self, _path: &str) -> Result<String> {
         Err(PasswordStoreError::NotInitialized(
-            "Password store not configured".to_string()
+            "Password store not configured".to_string(),
         ))
     }
-    
+
     fn get_field(&self, _path: &str, _field_name: &str) -> Result<String> {
         Err(PasswordStoreError::NotInitialized(
-            "Password store not configured".to_string()
+            "Password store not configured".to_string(),
         ))
     }
-    
+
     fn exists(&self, _path: &str) -> bool {
         false
     }
 }
 
 /// Replace placeholders only for the specified destination domain
-/// 
+///
 /// Only replaces {{pass:domain:...}} placeholders where domain matches destination.
 /// Placeholders for other domains are left unchanged.
-/// 
+///
 /// # Arguments
 /// * `text` - Text containing placeholders
 /// * `store` - Password store
 /// * `destination_domain` - Domain being accessed (e.g., "api.example.com")
-/// 
+///
 /// # Returns
 /// Text with matching placeholders replaced
-pub fn replace_placeholders(text: &str, store: &dyn PasswordStore, destination_domain: &str) -> Result<String> {
+pub fn replace_placeholders(
+    text: &str,
+    store: &dyn PasswordStore,
+    destination_domain: &str,
+) -> Result<String> {
     use regex::{Captures, Regex};
-    
+
     let re = Regex::new(r"\{\{pass:([^}]+)\}\}").unwrap();
-    
+
     let result = re.replace_all(text, |caps: &Captures| {
         let placeholder = &caps[1];
-        
+
         match PasswordReference::parse(placeholder) {
             Ok(r#ref) => {
                 // Only replace if domains match
@@ -186,17 +195,19 @@ pub fn replace_placeholders(text: &str, store: &dyn PasswordStore, destination_d
                     // Keep placeholder unchanged
                     return caps[0].to_string();
                 }
-                
+
                 match r#ref.mode {
-                    ReplacementMode::Password => {
-                        store.get_password(&r#ref.path).unwrap_or_else(|e| format!("ERROR: {}", e))
-                    }
-                    ReplacementMode::Full => {
-                        store.get_full_secret(&r#ref.path).unwrap_or_else(|e| format!("ERROR: {}", e))
-                    }
+                    ReplacementMode::Password => store
+                        .get_password(&r#ref.path)
+                        .unwrap_or_else(|e| format!("ERROR: {}", e)),
+                    ReplacementMode::Full => store
+                        .get_full_secret(&r#ref.path)
+                        .unwrap_or_else(|e| format!("ERROR: {}", e)),
                     ReplacementMode::Field => {
                         if let Some(field) = r#ref.field_name {
-                            store.get_field(&r#ref.path, &field).unwrap_or_else(|e| format!("ERROR: {}", e))
+                            store
+                                .get_field(&r#ref.path, &field)
+                                .unwrap_or_else(|e| format!("ERROR: {}", e))
                         } else {
                             format!("ERROR: missing field name")
                         }
@@ -216,16 +227,16 @@ pub fn replace_placeholders(text: &str, store: &dyn PasswordStore, destination_d
             }
         }
     });
-    
+
     Ok(result.into_owned())
 }
 
 /// Extract all password references from text (for validation/display purposes)
 pub fn extract_placeholders(text: &str) -> Vec<PasswordReference> {
     use regex::Regex;
-    
+
     let re = Regex::new(r"\{\{pass:([^}]+)\}\}").unwrap();
-    
+
     re.captures_iter(text)
         .filter_map(|caps| {
             let placeholder = &caps[1];
@@ -241,35 +252,32 @@ pub fn has_domain_placeholders(text: &str, domain: &str) -> bool {
 }
 
 /// Resolve a single password placeholder string (for API keys or other direct values)
-/// 
+///
 /// Takes a placeholder string like "example.com:api-key" or "pass:example.com:api-key"
 /// and returns the resolved value from the password store.
-/// 
+///
 /// If the input doesn't match the placeholder pattern, returns the input unchanged.
 /// This allows safe handling - pass through values that aren't placeholders.
-pub fn resolve_password_value(
-    value: &str, 
-    store: &dyn PasswordStore
-) -> Result<String> {
+pub fn resolve_password_value(value: &str, store: &dyn PasswordStore) -> Result<String> {
     // Support both formats:
     // 1. "domain:path" - for api_key resolution without {{}} wrapper
     // 2. "pass:domain:path" - more explicit
     // 3. Already a placeholder string (without {{}}) with full format
-    
+
     let remove_pass_prefix = if value.starts_with("pass:") {
-        &value[5..]  // Remove "pass:" prefix
+        &value[5..] // Remove "pass:" prefix
     } else {
         value
     };
-    
+
     // Parse as a reference (without domain filtering requirement)
     let parts: Vec<&str> = remove_pass_prefix.split(':').collect();
-    
+
     if parts.len() < 2 {
         // Not a password reference, return as-is
         return Ok(value.to_string());
     }
-    
+
     // Try to parse as PasswordReference
     match PasswordReference::parse(remove_pass_prefix) {
         Ok(r#ref) => {
@@ -282,13 +290,15 @@ pub fn resolve_password_value(
                         store.get_field(&r#ref.path, &field)
                     } else {
                         Err(PasswordStoreError::InvalidFormat(
-                            "Field mode requires field_name".to_string()
+                            "Field mode requires field_name".to_string(),
                         ))
                     }
                 }
-                ReplacementMode::Validate => {
-                    Ok(if store.exists(&r#ref.path) { "VALID".to_string() } else { "ERROR: not found".to_string() })
-                }
+                ReplacementMode::Validate => Ok(if store.exists(&r#ref.path) {
+                    "VALID".to_string()
+                } else {
+                    "ERROR: not found".to_string()
+                }),
             }
         }
         Err(_) => {
@@ -313,7 +323,10 @@ mod tests {
             passwords.insert("user".to_string(), "secret123".to_string());
             passwords.insert("pass".to_string(), "mypassword".to_string());
             // Full secret with newline-separated fields (using : as separator)
-            passwords.insert("apikey".to_string(), "APIKEY:line1\nusername:admin\n".to_string());
+            passwords.insert(
+                "apikey".to_string(),
+                "APIKEY:line1\nusername:admin\n".to_string(),
+            );
             Self { passwords }
         }
     }
@@ -322,10 +335,11 @@ mod tests {
         fn list_entries(&self) -> Result<Vec<String>> {
             Ok(self.passwords.keys().cloned().collect())
         }
-        
+
         fn get_password(&self, path: &str) -> Result<String> {
             // Simulates ripasso behavior: return first line for password
-            self.passwords.get(path)
+            self.passwords
+                .get(path)
                 .cloned()
                 .map(|s| {
                     // Remove trailing newlines, then get first line
@@ -334,13 +348,14 @@ mod tests {
                 })
                 .ok_or_else(|| PasswordStoreError::NotFound(path.to_string()))
         }
-        
+
         fn get_full_secret(&self, path: &str) -> Result<String> {
-            self.passwords.get(path)
+            self.passwords
+                .get(path)
                 .cloned()
                 .ok_or_else(|| PasswordStoreError::NotFound(path.to_string()))
         }
-        
+
         fn get_field(&self, path: &str, field_name: &str) -> Result<String> {
             let secret = self.get_full_secret(path)?;
             for line in secret.lines() {
@@ -354,7 +369,7 @@ mod tests {
             }
             Err(PasswordStoreError::FieldNotFound(field_name.to_string()))
         }
-        
+
         fn exists(&self, path: &str) -> bool {
             self.passwords.contains_key(path)
         }
@@ -429,10 +444,14 @@ mod tests {
     #[test]
     fn test_replace_placeholders_mixed_domains() {
         let store = MockPasswordStore::new();
-        let text = "Login to api: {{pass:api.example.com:user}} and web: {{pass:web.example.com:pass}}";
+        let text =
+            "Login to api: {{pass:api.example.com:user}} and web: {{pass:web.example.com:pass}}";
         let result = replace_placeholders(text, &store, "api.example.com").unwrap();
         // Only api.example.com placeholders should be replaced
-        assert_eq!(result, "Login to api: secret123 and web: {{pass:web.example.com:pass}}");
+        assert_eq!(
+            result,
+            "Login to api: secret123 and web: {{pass:web.example.com:pass}}"
+        );
     }
 
     #[test]
@@ -471,13 +490,22 @@ mod tests {
 
     #[test]
     fn test_has_domain_placeholders() {
-        assert!(has_domain_placeholders("{{pass:api.example.com:user}}", "api.example.com"));
-        assert!(!has_domain_placeholders("{{pass:api.example.com:user}}", "other.com"));
-        assert!(has_domain_placeholders("{{pass:api.example.com:user}} {{pass:other.com:pass}}", "api.example.com"));
+        assert!(has_domain_placeholders(
+            "{{pass:api.example.com:user}}",
+            "api.example.com"
+        ));
+        assert!(!has_domain_placeholders(
+            "{{pass:api.example.com:user}}",
+            "other.com"
+        ));
+        assert!(has_domain_placeholders(
+            "{{pass:api.example.com:user}} {{pass:other.com:pass}}",
+            "api.example.com"
+        ));
     }
 
     // SECURITY TESTS: Demonstrate domain isolation guarantees
-    
+
     struct ApiKeys {
         secrets: std::collections::HashMap<String, String>,
     }
@@ -497,7 +525,9 @@ mod tests {
             Ok(self.secrets.keys().cloned().collect())
         }
         fn get_password(&self, path: &str) -> Result<String> {
-            self.secrets.get(path).cloned()
+            self.secrets
+                .get(path)
+                .cloned()
                 .ok_or_else(|| PasswordStoreError::NotFound(path.to_string()))
         }
         fn get_full_secret(&self, path: &str) -> Result<String> {
@@ -515,11 +545,11 @@ mod tests {
     fn test_security_llm_receives_only_placeholders() {
         let store = ApiKeys::new();
         let llm_prompt = "Use {{pass:aws.amazon.com:aws}} for the API";
-        
+
         // LLM sees placeholders, not secrets
         assert!(llm_prompt.contains("{{pass:aws.amazon.com:aws}}"));
         assert!(!llm_prompt.contains("AKIA-SECRET"));
-        
+
         // This is what you send to the LLM - safe!
     }
 
@@ -527,7 +557,7 @@ mod tests {
     fn test_security_http_layer_gets_value_for_matching_domain() {
         let store = ApiKeys::new();
         let request = "Authorization: {{pass:aws.amazon.com:aws}}";
-        
+
         // HTTP to aws.amazon.com gets the real key
         let aws_request = replace_placeholders(request, &store, "aws.amazon.com").unwrap();
         assert_eq!(aws_request, "Authorization: AKIA-SECRET-AWS-KEY");
@@ -538,11 +568,11 @@ mod tests {
     fn test_security拦截_wrong_domain() {
         let store = ApiKeys::new();
         let request = "Authorization: {{pass:aws.amazon.com:aws}}";
-        
-        // IMPORTANT: Even though URL looks like github.com, 
+
+        // IMPORTANT: Even though URL looks like github.com,
         // placeholder refers to aws.amazon.com
         let github_request = replace_placeholders(request, &store, "github.com").unwrap();
-        
+
         // Should remain unchanged because domains don't match
         assert_eq!(github_request, "Authorization: {{pass:aws.amazon.com:aws}}");
         assert!(!github_request.contains("AKIA-SECRET"));
@@ -551,13 +581,14 @@ mod tests {
     #[test]
     fn test_security_domain_mismatch_prevents_leak() {
         let store = ApiKeys::new();
-        
+
         // User tries to make GitHub request but mistakenly uses AWS placeholder
-        let wrong_request = "curl -H 'Authorization: {{pass:aws.amazon.com:aws}}' https://github.com";
-        
+        let wrong_request =
+            "curl -H 'Authorization: {{pass:aws.amazon.com:aws}}' https://github.com";
+
         // Even if target is GitHub, AWS password stays hidden
         let result = replace_placeholders(wrong_request, &store, "github.com").unwrap();
-        
+
         assert!(result.contains("{{pass:aws.amazon.com:aws}}"));
         assert!(!result.contains("AKIA-SECRET"));
     }
@@ -566,13 +597,13 @@ mod tests {
     fn test_security_selective_replacement_in_multi_service_context() {
         let store = ApiKeys::new();
         let message = "AWS: {{pass:aws.amazon.com:aws}} GitHub: {{pass:github.com:github}} DB: {{pass:db.internal:db}}";
-        
+
         // Call to AWS service
         let aws_line = replace_placeholders(message, &store, "aws.amazon.com").unwrap();
         assert!(aws_line.contains("AKIA-SECRET-AWS-KEY"));
         assert!(aws_line.contains("{{pass:github.com:github}}")); // Still a placeholder
-        assert!(aws_line.contains("{{pass:db.internal:db}}"));     // Still a placeholder
-        
+        assert!(aws_line.contains("{{pass:db.internal:db}}")); // Still a placeholder
+
         // Call to GitHub
         let gh_line = replace_placeholders(message, &store, "github.com").unwrap();
         assert!(gh_line.contains("ghp-SECRET-GH-TOKEN"));
@@ -582,13 +613,13 @@ mod tests {
     #[test]
     fn test_security_helper_functions_work() {
         let text = "API {{pass:aws.amazon.com:aws}} and {{pass:github.com:github}}";
-        
+
         // Extract tells us what domains are involved
         let refs = extract_placeholders(text);
         assert_eq!(refs.len(), 2);
         assert_eq!(refs[0].domain, "aws.amazon.com");
         assert_eq!(refs[1].domain, "github.com");
-        
+
         // has_domain tells us quickly if domain is present
         assert!(has_domain_placeholders(text, "aws.amazon.com"));
         assert!(!has_domain_placeholders(text, "not-in-there.com"));
@@ -599,7 +630,7 @@ mod tests {
         let store = ApiKeys::new();
         let text = "Valid: {{pass:aws.amazon.com:aws}} Invalid: {{pass:nodomain}}";
         let result = replace_placeholders(text, &store, "aws.amazon.com").unwrap();
-        
+
         // Valid one replaced
         assert!(result.contains("AKIA-SECRET-AWS-KEY"));
         // Invalid kept as-is

@@ -1,6 +1,11 @@
 # Rust
 src-rust/target/
 
+# VS Code extension
+editors/vscode/node_modules/
+editors/vscode/out/
+editors/vscode/*.vsix
+
 # OS
 .DS_Store
 
@@ -18,5 +23,9 @@ refs/
 .vscode/
 .claurst/
 
-node_modules/
+# ...except the VS Code extension's own launch/build config, which is
+# required (not personal editor prefs) for F5 debugging to work.
+!editors/vscode/.vscode/
+!editors/vscode/.vscode/*.json
 
+node_modules/

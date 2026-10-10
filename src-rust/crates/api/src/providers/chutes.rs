@@ -12,15 +12,15 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::{debug, info, warn};
 
+use super::openai::OpenAiProvider;
 use crate::e2ee::{E2eeSession, ML_KEM_768_PUBKEY_SIZE};
 use crate::error_handling::parse_error_response;
 use crate::provider::{LlmProvider, ModelInfo};
 use crate::provider_error::ProviderError;
 use crate::provider_types::{
-    ProviderCapabilities, ProviderRequest, ProviderResponse, ProviderStatus,
-    StreamEvent, SystemPromptStyle,
+    ProviderCapabilities, ProviderRequest, ProviderResponse, ProviderStatus, StreamEvent,
+    SystemPromptStyle,
 };
-use super::openai::OpenAiProvider;
 
 const CHUTES_API_BASE: &str = "https://api.chutes.ai";
 const CHUTES_LLM_BASE: &str = "https://llm.chutes.ai/v1";
@@ -60,7 +60,9 @@ pub struct ChutesProvider {
 
 impl ChutesProvider {
     pub fn new() -> Self {
-        let api_key = std::env::var("CHUTES_API_KEY").ok().filter(|k| !k.is_empty());
+        let api_key = std::env::var("CHUTES_API_KEY")
+            .ok()
+            .filter(|k| !k.is_empty());
         Self::with_config(api_key)
     }
 
@@ -127,14 +129,17 @@ impl ChutesProvider {
             });
         }
 
-        let model_list: ModelListResponse = resp.json().await.map_err(|e| ProviderError::Other {
-            provider: self.id.clone(),
-            message: format!("Model list parse failed: {}", e),
-            status: Some(status.as_u16()),
-            body: None,
-        })?;
+        let model_list: ModelListResponse =
+            resp.json().await.map_err(|e| ProviderError::Other {
+                provider: self.id.clone(),
+                message: format!("Model list parse failed: {}", e),
+                status: Some(status.as_u16()),
+                body: None,
+            })?;
 
-        let found = model_list.data.iter()
+        let found = model_list
+            .data
+            .iter()
             .find(|m| m.id == model_path || m.id == model)
             .ok_or_else(|| ProviderError::Other {
                 provider: self.id.clone(),
@@ -159,9 +164,10 @@ impl ChutesProvider {
         let url = format!("{}/e2e/instances/{}", CHUTES_API_BASE, chute_id);
 
         let builder = self.apply_auth(
-            self.http_client.get(&url)
+            self.http_client
+                .get(&url)
                 .timeout(Duration::from_secs(30))
-                .header("Cache-Control", "no-cache, no-store")
+                .header("Cache-Control", "no-cache, no-store"),
         );
 
         let resp = builder.send().await.map_err(|e| ProviderError::Other {
@@ -207,8 +213,11 @@ impl ChutesProvider {
         Ok(info)
     }
 
-    fn parse_public_key(pk_b64: &str) -> Result<pqcrypto_kyber::kyber768::PublicKey, ProviderError> {
-        let pk_bytes = base64::engine::general_purpose::STANDARD.decode(pk_b64)
+    fn parse_public_key(
+        pk_b64: &str,
+    ) -> Result<pqcrypto_kyber::kyber768::PublicKey, ProviderError> {
+        let pk_bytes = base64::engine::general_purpose::STANDARD
+            .decode(pk_b64)
             .map_err(|e| ProviderError::Other {
                 provider: ProviderId::new(ProviderId::CHUTES),
                 message: format!("Invalid public key base64: {}", e),
@@ -219,27 +228,26 @@ impl ChutesProvider {
         if pk_bytes.len() != ML_KEM_768_PUBKEY_SIZE {
             return Err(ProviderError::Other {
                 provider: ProviderId::new(ProviderId::CHUTES),
-                message: format!("Invalid pubkey size: expected {}, got {}",
-                    ML_KEM_768_PUBKEY_SIZE, pk_bytes.len()),
+                message: format!(
+                    "Invalid pubkey size: expected {}, got {}",
+                    ML_KEM_768_PUBKEY_SIZE,
+                    pk_bytes.len()
+                ),
                 status: None,
                 body: None,
             });
         }
 
-        PublicKeyTrait::from_bytes(&pk_bytes)
-            .map_err(|e| ProviderError::Other {
-                provider: ProviderId::new(ProviderId::CHUTES),
-                message: format!("Invalid ML-KEM pubkey bytes: {:?}", e),
-                status: None,
-                body: None,
-            })
+        PublicKeyTrait::from_bytes(&pk_bytes).map_err(|e| ProviderError::Other {
+            provider: ProviderId::new(ProviderId::CHUTES),
+            message: format!("Invalid ML-KEM pubkey bytes: {:?}", e),
+            status: None,
+            body: None,
+        })
     }
 
     fn build_messages(&self, request: &ProviderRequest) -> Vec<Value> {
-        OpenAiProvider::to_openai_messages_pub(
-            &request.messages,
-            request.system_prompt.as_ref(),
-        )
+        OpenAiProvider::to_openai_messages_pub(&request.messages, request.system_prompt.as_ref())
     }
 
     async fn e2ee_invoke_attempt(
@@ -249,7 +257,9 @@ impl ChutesProvider {
     ) -> Result<(E2eeSession, reqwest::Response), ProviderError> {
         let instances = self.discover_instances(chute_id).await?;
 
-        let instance = instances.instances.first()
+        let instance = instances
+            .instances
+            .first()
             .ok_or_else(|| ProviderError::Other {
                 provider: self.id.clone(),
                 message: "No E2EE instances available".to_string(),
@@ -257,7 +267,9 @@ impl ChutesProvider {
                 body: None,
             })?;
 
-        let nonce = instance.nonces.first()
+        let nonce = instance
+            .nonces
+            .first()
             .ok_or_else(|| ProviderError::Other {
                 provider: self.id.clone(),
                 message: "No nonces available for instance".to_string(),
@@ -267,7 +279,10 @@ impl ChutesProvider {
 
         let instance_pubkey = Self::parse_public_key(&instance.e2e_pubkey)?;
 
-        let model_name = request.model.strip_prefix("chutes/").unwrap_or(&request.model);
+        let model_name = request
+            .model
+            .strip_prefix("chutes/")
+            .unwrap_or(&request.model);
 
         let mut request_json = json!({
             "model": model_name,
@@ -300,7 +315,9 @@ impl ChutesProvider {
             "E2EE invoke attempt"
         );
 
-        let req = self.http_client.post(CHUTES_E2E_INVOKE)
+        let req = self
+            .http_client
+            .post(CHUTES_E2E_INVOKE)
             .header("Content-Type", "application/octet-stream")
             .header("X-Chute-Id", chute_id)
             .header("X-Instance-Id", &instance.instance_id)
@@ -308,7 +325,8 @@ impl ChutesProvider {
             .header("X-E2E-Stream", "true")
             .header("X-E2E-Path", "/v1/chat/completions")
             .body(encrypted_blob);
-        let resp = self.apply_auth(req)
+        let resp = self
+            .apply_auth(req)
             .send()
             .await
             .map_err(|e| ProviderError::Other {
@@ -324,7 +342,8 @@ impl ChutesProvider {
     async fn create_message_stream_e2ee(
         &self,
         request: ProviderRequest,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent, ProviderError>> + Send>>, ProviderError> {
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent, ProviderError>> + Send>>, ProviderError>
+    {
         let chute_id = self.resolve_chute_id(&request.model).await?;
 
         let mut last_err = None;
@@ -370,7 +389,8 @@ impl ChutesProvider {
         session: E2eeSession,
         resp: reqwest::Response,
         provider_id: ProviderId,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent, ProviderError>> + Send>>, ProviderError> {
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent, ProviderError>> + Send>>, ProviderError>
+    {
         let stream = stream! {
             use futures::StreamExt;
 
@@ -563,7 +583,9 @@ fn process_openai_chunk(
         });
         events.push(StreamEvent::ContentBlockStart {
             index: 0,
-            content_block: ContentBlock::Text { text: String::new() },
+            content_block: ContentBlock::Text {
+                text: String::new(),
+            },
         });
         *message_started = true;
     }
@@ -578,7 +600,9 @@ fn process_openai_chunk(
                     usage: Some(usage),
                 });
             }
-            if events.is_empty() { return None; }
+            if events.is_empty() {
+                return None;
+            }
             return Some(events);
         }
     };
@@ -586,7 +610,9 @@ fn process_openai_chunk(
     let choice = match choices.first() {
         Some(c) => c,
         None => {
-            if events.is_empty() { return None; }
+            if events.is_empty() {
+                return None;
+            }
             return Some(events);
         }
     };
@@ -594,7 +620,9 @@ fn process_openai_chunk(
     let delta = match choice.get("delta") {
         Some(d) => d,
         None => {
-            if events.is_empty() { return None; }
+            if events.is_empty() {
+                return None;
+            }
             return Some(events);
         }
     };
@@ -625,19 +653,32 @@ fn process_openai_chunk(
         for tc in tool_calls {
             let tc_index = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             if let Some(tc_id) = tc.get("id").and_then(|v| v.as_str()) {
-                let name = tc.get("function").and_then(|f| f.get("name")).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let name = tc
+                    .get("function")
+                    .and_then(|f| f.get("name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let block_index = 1 + tc_index;
-                tool_call_buffers.insert(block_index, (tc_id.to_string(), name.clone(), String::new()));
+                tool_call_buffers.insert(
+                    block_index,
+                    (tc_id.to_string(), name.clone(), String::new()),
+                );
                 events.push(StreamEvent::ContentBlockStart {
                     index: block_index,
                     content_block: ContentBlock::ToolUse {
                         id: tc_id.to_string(),
                         name,
                         input: json!({}),
+                        thought_signature: None,
                     },
                 });
             }
-            if let Some(args_frag) = tc.get("function").and_then(|f| f.get("arguments")).and_then(|v| v.as_str()) {
+            if let Some(args_frag) = tc
+                .get("function")
+                .and_then(|f| f.get("arguments"))
+                .and_then(|v| v.as_str())
+            {
                 if !args_frag.is_empty() {
                     let block_index = 1 + tc_index;
                     if let Some((_, _, buf)) = tool_call_buffers.get_mut(&block_index) {
@@ -672,7 +713,11 @@ fn process_openai_chunk(
         }
     }
 
-    if events.is_empty() { None } else { Some(events) }
+    if events.is_empty() {
+        None
+    } else {
+        Some(events)
+    }
 }
 
 #[async_trait]
@@ -704,16 +749,28 @@ impl LlmProvider for ChutesProvider {
             match result {
                 Err(e) => return Err(e),
                 Ok(evt) => match evt {
-                    StreamEvent::MessageStart { id: msg_id, model: msg_model, usage: msg_usage } => {
+                    StreamEvent::MessageStart {
+                        id: msg_id,
+                        model: msg_model,
+                        usage: msg_usage,
+                    } => {
                         id = msg_id;
                         model = msg_model;
                         usage = msg_usage;
                     }
-                    StreamEvent::ContentBlockStart { index, content_block } => match content_block {
+                    StreamEvent::ContentBlockStart {
+                        index,
+                        content_block,
+                    } => match content_block {
                         ContentBlock::Text { text } => {
                             text_parts.push((index, text));
                         }
-                        ContentBlock::ToolUse { id: tool_id, name, input: _ } => {
+                        ContentBlock::ToolUse {
+                            id: tool_id,
+                            name,
+                            input: _,
+                            ..
+                        } => {
                             tool_buffers.insert(index, (tool_id, name, String::new()));
                         }
                         other => {
@@ -725,7 +782,10 @@ impl LlmProvider for ChutesProvider {
                             entry.1.push_str(&text);
                         }
                     }
-                    StreamEvent::InputJsonDelta { index, partial_json } => {
+                    StreamEvent::InputJsonDelta {
+                        index,
+                        partial_json,
+                    } => {
                         if let Some((_, _, buf)) = tool_buffers.get_mut(&index) {
                             buf.push_str(&partial_json);
                         }
@@ -738,19 +798,26 @@ impl LlmProvider for ChutesProvider {
                                 id: tool_id,
                                 name,
                                 input,
+                                thought_signature: None,
                             });
                         }
-                    },
-                    StreamEvent::MessageDelta { stop_reason: sr, usage: delta_usage } => {
+                    }
+                    StreamEvent::MessageDelta {
+                        stop_reason: sr,
+                        usage: delta_usage,
+                    } => {
                         if let Some(r) = sr {
                             stop_reason = r;
                         }
                         if let Some(u) = delta_usage {
                             usage.output_tokens += u.output_tokens;
                         }
-                    },
+                    }
                     StreamEvent::MessageStop => break,
-                    StreamEvent::Error { error_type, message } => {
+                    StreamEvent::Error {
+                        error_type,
+                        message,
+                    } => {
                         return Err(ProviderError::StreamError {
                             provider: self.id.clone(),
                             message: format!("[{}] {}", error_type, message),
@@ -784,7 +851,8 @@ impl LlmProvider for ChutesProvider {
     async fn create_message_stream(
         &self,
         request: ProviderRequest,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent, ProviderError>> + Send>>, ProviderError> {
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent, ProviderError>> + Send>>, ProviderError>
+    {
         if self.has_no_key() {
             return Err(ProviderError::Other {
                 provider: self.id.clone(),
@@ -803,17 +871,17 @@ impl LlmProvider for ChutesProvider {
         }
     }
 
-    async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+    async fn discover_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
         if self.api_key.is_none() {
-            return Ok(vec![
-                ModelInfo {
-                    id: ModelId::new("chutes/zai-org/GLM-5.1-TEE"),
-                    provider_id: self.id.clone(),
-                    name: "GLM-5.1 TEE (Chutes E2EE)".to_string(),
-                    context_window: 200_000,
-                    max_output_tokens: 32_000,
-                },
-            ]);
+            return Ok(vec![ModelInfo {
+                id: ModelId::new("chutes/zai-org/GLM-5.1-TEE"),
+                provider_id: self.id.clone(),
+                name: "GLM-5.1 TEE (Chutes E2EE)".to_string(),
+                context_window: 200_000,
+                max_output_tokens: 32_000,
+                release_date: None,
+                status: None,
+            }]);
         }
 
         match self.discover_chutes_models().await {
@@ -866,14 +934,16 @@ impl ChutesProvider {
         })?;
 
         let status = resp.status();
-        let model_list: ModelListResponse = resp.json().await.map_err(|e| ProviderError::Other {
-            provider: self.id.clone(),
-            message: format!("Model list parse failed: {}", e),
-            status: Some(status.as_u16()),
-            body: None,
-        })?;
+        let model_list: ModelListResponse =
+            resp.json().await.map_err(|e| ProviderError::Other {
+                provider: self.id.clone(),
+                message: format!("Model list parse failed: {}", e),
+                status: Some(status.as_u16()),
+                body: None,
+            })?;
 
-        Ok(model_list.data
+        Ok(model_list
+            .data
             .iter()
             .filter(|m| m.confidential_compute)
             .map(|m| ModelInfo {
@@ -882,6 +952,8 @@ impl ChutesProvider {
                 name: format!("{} (Chutes TEE)", m.id),
                 context_window: 200_000,
                 max_output_tokens: 32_000,
+                release_date: None,
+                status: None,
             })
             .collect())
     }

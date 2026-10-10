@@ -3,16 +3,24 @@
 //
 // All sub-modules are defined inline below.
 
+// too_many_arguments: several config-import and permission-resolution helpers
+// legitimately thread many parameters; grouping them into structs is a larger
+// refactor out of scope for this cleanup.
+#![allow(clippy::too_many_arguments)]
+// should_implement_trait: intentional inherent `from_str` constructors that
+// return domain-specific types, not the std `FromStr` trait.
+#![allow(clippy::should_implement_trait)]
+
 // Branded provider / model identifier newtypes.
 pub mod provider_id;
-pub use provider_id::{ProviderId, ModelId};
+pub use provider_id::{ModelId, ProviderId};
 
 // Session transcript persistence (JSONL, matches TS sessionStorage.ts schema).
 pub mod session_storage;
 
 // SQLite-backed session storage (faster alternative to JSONL).
 pub mod sqlite_storage;
-pub use sqlite_storage::{SqliteSessionStore, SessionSummary};
+pub use sqlite_storage::{SessionSummary, SqliteSessionStore};
 
 // Attachment pipeline — assembles per-turn context attachments (T1-6).
 pub mod attachments;
@@ -28,16 +36,20 @@ pub use auth_store::{AuthStore, StoredCredential};
 pub mod device_code;
 
 // Utility modules ported from src/utils/
+pub mod auto_mode;
+pub mod crypto_utils;
+pub mod format_utils;
+pub mod spinner;
+pub mod status_notices;
 pub mod token_budget;
 pub mod truncate;
-pub mod format_utils;
-pub mod crypto_utils;
-pub mod status_notices;
-pub mod auto_mode;
+pub use spinner::{
+    sample_completion_verb, sample_spinner_verb, SPINNER_VERBS, TURN_COMPLETION_VERBS,
+};
 
 // Remote session sync and cloud session API (T3-1, T3-2).
-pub mod remote_session;
 pub mod cloud_session;
+pub mod remote_session;
 
 // AGENTS.md hierarchical memory loading (T4-1).
 pub mod claudemd;
@@ -51,6 +63,13 @@ pub mod file_history;
 // Snapshot/undo system — tracks file changes per session for /undo support.
 pub mod snapshot;
 
+// Per-session durable objectives (/goal feature).
+pub mod goal;
+pub use goal::{
+    goal_continuation_message, goal_kickoff_message, goal_system_prompt_addendum, goals_enabled,
+    Goal, GoalError, GoalStatus, GoalStore, MAX_GOAL_TURNS, MAX_OBJECTIVE_CHARS,
+};
+
 // Feature flag management via GrowthBook.
 pub mod feature_flags;
 
@@ -59,49 +78,64 @@ pub mod mcp_templates;
 
 // IDE environment detection (VS Code, Cursor, JetBrains, …).
 pub mod ide;
-pub use ide::{IdeKind, detect_ide};
+pub use ide::{detect_ide, IdeKind};
 
 // Background update checker — compares running version against GitHub releases.
 pub mod update_check;
 pub use update_check::{check_for_updates, UpdateInfo};
 
 /// Password store integration using ripasso (pass format) with domain isolation.
-/// 
+///
 /// This module provides password storage using the pass/ ripasso format.
 /// Placeholders must include domain: `{{pass:example.com:secret}}`.
 /// Passwords are ONLY replaced when sending to the matching domain - never
 /// to LLMs or other destinations. This prevents credential leakage.
 pub mod password_store;
-pub use password_store::{PasswordStore, PasswordStoreConfig, PasswordStoreError, NullPasswordStore, PasswordReference, ReplacementMode, replace_placeholders, extract_placeholders, has_domain_placeholders, resolve_password_value};
+pub use password_store::{
+    extract_placeholders, has_domain_placeholders, replace_placeholders, resolve_password_value,
+    NullPasswordStore, PasswordReference, PasswordStore, PasswordStoreConfig, PasswordStoreError,
+    ReplacementMode,
+};
 
 /// Ripasso-backed password store implementation using system GPG.
 /// Use this to provide real password storage with ripasso/pass compatibility.
 pub mod password_store_ripasso;
 pub use password_store_ripasso::RipassoPasswordStore;
 
+// Self-contained HTML export of a session, used by the `/share` slash command.
+pub mod share_export;
+
 // Re-export commonly used types at the crate root
+pub use config::{
+    builtin_managed_agent_presets, default_agents, strip_jsonc_comments, substitute_env_vars,
+    AgentDefinition, BudgetSplitPolicy, CommandTemplate, Config, FormatterConfig,
+    ManagedAgentConfig, ManagedAgentPreset, McpServerConfig, McpServerOrigin, OutputFormat,
+    PermissionMode, ProviderConfig, Settings, SkillsConfig, Theme,
+};
 pub use error::{ClaudeError, Result};
+pub use import_config::{
+    build_import_preview, execute_import, summarize_import_result, ClaudeMdPreview,
+    ImportExecutionResult, ImportPaths, ImportPreview, ImportSelection, PreviewAction,
+    PreviewField, SettingsPreview,
+};
 pub use types::{
-    ContentBlock, ImageSource, DocumentSource, CitationsConfig, Message, MessageContent,
+    CitationsConfig, ContentBlock, DocumentSource, ImageSource, Message, MessageContent,
     MessageCost, Role, ToolDefinition, ToolResultContent, UsageInfo,
 };
-pub use config::{AgentDefinition, BudgetSplitPolicy, Config, CommandTemplate, FormatterConfig, ManagedAgentConfig, ManagedAgentPreset, McpServerConfig, OutputFormat, PermissionMode, ProviderConfig, Settings, SkillsConfig, Theme, builtin_managed_agent_presets, default_agents, strip_jsonc_comments, substitute_env_vars};
 
 // Skill discovery: filesystem and git URL skill loading.
 pub mod skill_discovery;
-pub use skill_discovery::{DiscoveredSkill, discover_skills, parse_skill_file};
 pub use cost::CostTracker;
-pub use history::ConversationSession;
 pub use feature_flags::FeatureFlagManager;
-pub use snapshot::SnapshotManager;
+pub use history::ConversationSession;
+pub use paths::claurst_home;
 pub use permissions::{
-    AutoPermissionHandler, InteractivePermissionHandler,
-    ManagedAutoPermissionHandler, ManagedInteractivePermissionHandler,
-    PermissionAction, PermissionDecision, PermissionHandler,
-    PermissionLevel, PermissionManager, PermissionRequest,
+    format_permission_reason, AutoPermissionHandler, InteractivePermissionHandler,
+    ManagedAutoPermissionHandler, ManagedInteractivePermissionHandler, PermissionAction,
+    PermissionDecision, PermissionHandler, PermissionLevel, PermissionManager, PermissionRequest,
     PermissionRule, PermissionScope, SerializedPermissionRule,
-    format_permission_reason,
 };
+pub use skill_discovery::{discover_skills, parse_skill_file, DiscoveredSkill};
 
 // ---------------------------------------------------------------------------
 // error module
@@ -214,6 +248,13 @@ pub mod types {
             id: String,
             name: String,
             input: Value,
+            /// Opaque, provider-supplied metadata that must be echoed back
+            /// verbatim on subsequent turns for the tool call to be accepted.
+            /// Currently carries Google Gemini's `thoughtSignature` for thinking
+            /// models (issue #311); `None` for every other provider. Persisted
+            /// with the session so it survives save/load.
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            thought_signature: Option<String>,
         },
         ToolResult {
             tool_use_id: String,
@@ -325,6 +366,10 @@ pub mod types {
         pub uuid: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub cost: Option<MessageCost>,
+        /// Files changed during this assistant turn, captured by the shadow snapshot.
+        /// Populated by the query loop on `finish-step`; absent on user messages.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub snapshot_patch: Option<crate::snapshot::Patch>,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -342,6 +387,7 @@ pub mod types {
                 content: MessageContent::Text(content.into()),
                 uuid: None,
                 cost: None,
+                snapshot_patch: None,
             }
         }
 
@@ -352,6 +398,7 @@ pub mod types {
                 content: MessageContent::Blocks(blocks),
                 uuid: None,
                 cost: None,
+                snapshot_patch: None,
             }
         }
 
@@ -362,6 +409,7 @@ pub mod types {
                 content: MessageContent::Text(content.into()),
                 uuid: None,
                 cost: None,
+                snapshot_patch: None,
             }
         }
 
@@ -372,6 +420,7 @@ pub mod types {
                 content: MessageContent::Blocks(blocks),
                 uuid: None,
                 cost: None,
+                snapshot_patch: None,
             }
         }
 
@@ -454,7 +503,10 @@ pub mod types {
         }
 
         /// Create a user message representing a `!`-prefixed local shell command with output.
-        pub fn user_local_command_output(command: impl Into<String>, output: impl Into<String>) -> Self {
+        pub fn user_local_command_output(
+            command: impl Into<String>,
+            output: impl Into<String>,
+        ) -> Self {
             Self {
                 role: Role::User,
                 content: MessageContent::Blocks(vec![ContentBlock::UserLocalCommandOutput {
@@ -463,6 +515,7 @@ pub mod types {
                 }]),
                 uuid: None,
                 cost: None,
+                snapshot_patch: None,
             }
         }
 
@@ -476,6 +529,7 @@ pub mod types {
                 }]),
                 uuid: None,
                 cost: None,
+                snapshot_patch: None,
             }
         }
 
@@ -489,6 +543,7 @@ pub mod types {
                 }]),
                 uuid: None,
                 cost: None,
+                snapshot_patch: None,
             }
         }
 
@@ -502,6 +557,7 @@ pub mod types {
                 }]),
                 uuid: None,
                 cost: None,
+                snapshot_patch: None,
             }
         }
 
@@ -520,6 +576,7 @@ pub mod types {
                 }]),
                 uuid: None,
                 cost: None,
+                snapshot_patch: None,
             }
         }
 
@@ -538,6 +595,7 @@ pub mod types {
                 }]),
                 uuid: None,
                 cost: None,
+                snapshot_patch: None,
             }
         }
     }
@@ -585,10 +643,10 @@ pub mod types {
 // config module
 // ---------------------------------------------------------------------------
 pub mod config {
+    use crate::password_store::PasswordStoreConfig;
     use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
-    use std::path::PathBuf;
-    use crate::password_store::PasswordStoreConfig;
+    use std::path::{Path, PathBuf};
 
     // ---- Hook configuration ----------------------------------------------
 
@@ -633,6 +691,19 @@ pub mod config {
     fn default_true() -> bool {
         true
     }
+
+    fn default_file_autocomplete_limit() -> usize {
+        15
+    }
+
+    fn default_file_injection_max_size() -> usize {
+        100 // 100 KB
+    }
+
+    /// Default total request timeout (seconds) when the user has not configured
+    /// one. Generous so slow local models (CPU inference, large MoE) that can
+    /// take several minutes to first token are not cut off prematurely.
+    pub const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 600;
 
     /// Definition of a named agent with per-agent model, permissions,
     /// temperature, and system prompt.
@@ -706,7 +777,7 @@ pub mod config {
         match provider_id {
             "anthropic" => Some(crate::constants::ANTHROPIC_API_BASE),
             "openai" => Some("https://api.openai.com"),
-            "minimax" => Some("https://api.minimax.io/anthropic"),
+            "minimax" => Some(crate::constants::MINIMAX_ANTHROPIC_API_BASE),
             "ollama" => Some("http://localhost:11434"),
             "lmstudio" | "lm-studio" => Some("http://localhost:1234"),
             "llamacpp" | "llama-cpp" | "llama-server" => Some("http://localhost:8080"),
@@ -757,17 +828,15 @@ pub mod config {
     /// Budget allocation strategy between manager and executor agents.
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     #[serde(tag = "type", rename_all = "snake_case")]
+    #[derive(Default)]
     pub enum BudgetSplitPolicy {
         /// Shared pool — no split (default).
+        #[default]
         SharedPool,
         /// Manager gets manager_pct% of total budget.
         Percentage { manager_pct: u8 },
         /// Hard USD caps per role.
         FixedCaps { manager_usd: f64, executor_usd: f64 },
-    }
-
-    impl Default for BudgetSplitPolicy {
-        fn default() -> Self { BudgetSplitPolicy::SharedPool }
     }
 
     /// Configuration for manager-executor agent architecture.
@@ -792,8 +861,12 @@ pub mod config {
         pub executor_isolation: bool,
     }
 
-    fn default_executor_max_turns() -> u32 { 10 }
-    fn default_max_concurrent_executors() -> u32 { 4 }
+    fn default_executor_max_turns() -> u32 {
+        10
+    }
+    fn default_max_concurrent_executors() -> u32 {
+        4
+    }
 
     /// A named preset for common manager-executor configurations.
     pub struct ManagedAgentPreset {
@@ -886,6 +959,17 @@ pub mod config {
         /// Provider-specific options (passed through to provider implementation)
         #[serde(default)]
         pub options: HashMap<String, serde_json::Value>,
+        /// Total request timeout in seconds for this provider's HTTP client.
+        /// Overrides the global [`Config::request_timeout_secs`] when set.
+        /// Useful for slow local models (CPU inference, large MoE) that can take
+        /// several minutes to first token. `None` falls back to the global value.
+        #[serde(
+            default,
+            rename = "requestTimeoutSecs",
+            alias = "request_timeout_secs",
+            skip_serializing_if = "Option::is_none"
+        )]
+        pub request_timeout_secs: Option<u64>,
     }
 
     impl Default for ProviderConfig {
@@ -897,7 +981,69 @@ pub mod config {
                 models_whitelist: Vec::new(),
                 models_blacklist: Vec::new(),
                 options: HashMap::new(),
+                request_timeout_secs: None,
             }
+        }
+    }
+
+    // ---- ModelOverride ---------------------------------------------------
+
+    /// User-supplied metadata override for a single model, keyed by the
+    /// `"provider/model"` string in [`Config::model_overrides`].
+    ///
+    /// Every field is optional: a `Some` value takes precedence over the
+    /// models.dev catalog entry (and over any built-in default), while a `None`
+    /// leaves the catalog value untouched. When the keyed model is absent from
+    /// the catalog entirely (a self-hosted alias, or an id models.dev does not
+    /// know), the override is materialised into a synthetic registry entry so
+    /// the model picker, token warnings, and auto-compact thresholds size it
+    /// correctly instead of mismatching it to an unrelated catalog model.
+    ///
+    /// Field names accept both camelCase (`contextWindow`) and snake_case
+    /// (`context_window`) so the override reads naturally whether it lives at the
+    /// top level of `settings.json` or under the nested `config` block.
+    #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+    pub struct ModelOverride {
+        /// Total context window size in tokens.
+        #[serde(
+            default,
+            rename = "contextWindow",
+            alias = "context_window",
+            skip_serializing_if = "Option::is_none"
+        )]
+        pub context_window: Option<u32>,
+        /// Maximum tokens the model can emit in a single response.
+        #[serde(
+            default,
+            rename = "maxOutputTokens",
+            alias = "max_output_tokens",
+            skip_serializing_if = "Option::is_none"
+        )]
+        pub max_output_tokens: Option<u32>,
+        /// Human-readable display name shown in the model picker.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub name: Option<String>,
+        /// First public availability (ISO 8601 date), drives date-DESC listing.
+        #[serde(
+            default,
+            rename = "releaseDate",
+            alias = "release_date",
+            skip_serializing_if = "Option::is_none"
+        )]
+        pub release_date: Option<String>,
+        /// Lifecycle status string (`"active"`, `"beta"`, …).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub status: Option<String>,
+    }
+
+    impl ModelOverride {
+        /// Whether this override carries no data (every field is `None`).
+        pub fn is_empty(&self) -> bool {
+            self.context_window.is_none()
+                && self.max_output_tokens.is_none()
+                && self.name.is_none()
+                && self.release_date.is_none()
+                && self.status.is_none()
         }
     }
 
@@ -942,6 +1088,11 @@ pub mod config {
         /// Per-provider configurations
         #[serde(default)]
         pub provider_configs: HashMap<String, ProviderConfig>,
+        /// User-supplied model metadata overrides, keyed by `"provider/model"`.
+        /// Take precedence over the models.dev catalog (copied from Settings on
+        /// load; see [`ModelOverride`]).
+        #[serde(default, rename = "modelOverrides", alias = "model_overrides")]
+        pub model_overrides: HashMap<String, ModelOverride>,
         /// Formatter configurations (copied from Settings on load).
         #[serde(default)]
         pub formatter: HashMap<String, FormatterConfig>,
@@ -960,6 +1111,68 @@ pub mod config {
         /// Password store configuration.
         #[serde(default)]
         pub password_store: PasswordStoreConfig,
+        /// Shadow-git auto-commit snapshot system.  `Some(true)` = enabled.  `None` or `Some(false)` = disabled (default).
+        /// Set via `--auto-commits` flag or `"autoCommits": true` in settings.json.
+        #[serde(
+            default,
+            rename = "autoCommits",
+            skip_serializing_if = "Option::is_none"
+        )]
+        pub auto_commits: Option<bool>,
+        /// Enable cursor blinking in the chat prompt. Defaults to false (disabled).
+        #[serde(
+            default,
+            rename = "cursorBlinkEnabled",
+            skip_serializing_if = "is_false"
+        )]
+        pub cursor_blink_enabled: bool,
+        /// Maximum number of file suggestions shown in autocomplete. Defaults to 15.
+        #[serde(
+            default = "default_file_autocomplete_limit",
+            rename = "fileAutocompleteLimit"
+        )]
+        pub file_autocomplete_limit: usize,
+        /// Whether to show hidden files in file autocomplete. Defaults to false.
+        #[serde(default, rename = "fileAutocompleteShowHiddenFiles")]
+        pub file_autocomplete_show_hidden_files: bool,
+        /// Whether @ file references are automatically injected into message context. Defaults to true.
+        /// When true: @file auto-injects file contents into your message before sending.
+        /// When false: @ is just autocomplete and reference (no auto-injection).
+        /// Note: This only affects user messages. @include in CLAUDE.md/AGENTS.md always injects with no size limits.
+        #[serde(default = "default_true", rename = "fileInjectionEnabled")]
+        pub file_injection_enabled: bool,
+        /// Maximum file size to auto-inject (in KB). Defaults to 100. Set to 0 for no limit.
+        /// When a file exceeds this limit, users get a warning and can choose to override or cancel.
+        /// Note: @include in CLAUDE.md/AGENTS.md always injects regardless of this limit.
+        #[serde(
+            default = "default_file_injection_max_size",
+            rename = "fileInjectionMaxSize"
+        )]
+        pub file_injection_max_size: usize,
+        /// Total request timeout in seconds applied to provider HTTP clients.
+        /// Slow local models (CPU inference, large MoE) can take several minutes
+        /// to first token; raise this to avoid premature cut-off. `None` (or 0)
+        /// uses [`DEFAULT_REQUEST_TIMEOUT_SECS`]. Per-provider overrides live on
+        /// [`ProviderConfig::request_timeout_secs`].
+        #[serde(
+            default,
+            rename = "requestTimeoutSecs",
+            alias = "request_timeout_secs",
+            skip_serializing_if = "Option::is_none"
+        )]
+        pub request_timeout_secs: Option<u64>,
+        /// Whether app-level mouse capture is enabled. `None` (default) or
+        /// `Some(true)` means claurst captures the mouse for scroll / right-click
+        /// context menu / middle-click paste / drag text-selection. Set
+        /// `"mouseCapture": false` to release the mouse to the terminal so native
+        /// click-drag selection and copy/paste work without lag (issue #104).
+        /// Keyboard scrolling (PageUp/PageDown, etc.) is unaffected either way.
+        #[serde(
+            default,
+            rename = "mouseCapture",
+            skip_serializing_if = "Option::is_none"
+        )]
+        pub mouse_capture: Option<bool>,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -992,6 +1205,27 @@ pub mod config {
         StreamJson,
     }
 
+    /// Where an MCP server definition came from.
+    ///
+    /// This is a *runtime* classification used to gate auto-launching of
+    /// servers that can run arbitrary commands. It is deliberately NEVER
+    /// (de)serialized from the settings file (see `#[serde(skip)]` on
+    /// `McpServerConfig::origin`): a repository's `.claurst/settings.json`
+    /// must not be able to forge `User` to bypass the trust gate. The origin
+    /// is always assigned in code at load time.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+    pub enum McpServerOrigin {
+        /// Defined in the user's global `~/.claurst/settings.json`, supplied
+        /// on the command line (`--mcp-config`), or contributed by an
+        /// explicitly-enabled plugin. Considered trusted: auto-connects.
+        #[default]
+        User,
+        /// Defined in a repository's project-level `.claurst/settings.json`.
+        /// Untrusted until the user approves it, because opening a cloned repo
+        /// would otherwise spawn an attacker-controlled process (RCE).
+        Project,
+    }
+
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct McpServerConfig {
         pub name: String,
@@ -1003,6 +1237,11 @@ pub mod config {
         pub url: Option<String>,
         #[serde(rename = "type", default = "default_mcp_type")]
         pub server_type: String,
+        /// Origin of this definition. Never read from JSON (always `User` on
+        /// deserialize); set to `Project` in `find_project_settings` for
+        /// servers loaded from a repo. See [`McpServerOrigin`].
+        #[serde(skip)]
+        pub origin: McpServerOrigin,
     }
 
     fn default_mcp_type() -> String {
@@ -1033,6 +1272,13 @@ pub mod config {
         pub projects: HashMap<String, ProjectSettings>,
         #[serde(default, rename = "remoteControlAtStartup")]
         pub remote_control_at_startup: bool,
+        /// Global opt-in: trust and auto-launch project-defined MCP servers
+        /// (those declared in a repository's `.claurst/settings.json`) without
+        /// prompting. Defaults to `false`. Leaving it off means project servers
+        /// must be approved per-project before they can spawn a process.
+        /// Prefer per-project approval over flipping this on globally.
+        #[serde(default, rename = "trustProjectMcpServers")]
+        pub trust_project_mcp_servers: bool,
         /// Persisted permission rules saved by the user across sessions.
         #[serde(default, rename = "permissionRules")]
         pub permission_rules: Vec<crate::permissions::SerializedPermissionRule>,
@@ -1046,6 +1292,16 @@ pub mod config {
         /// Mirrors TS `hasAcknowledgedSafetyNotice` / `hasCompletedOnboarding`.
         #[serde(default, rename = "hasCompletedOnboarding")]
         pub has_completed_onboarding: bool,
+        /// Whether the user has accepted the Bypass Permissions warning.
+        /// Mirrors TS `skipDangerousModePermissionPrompt`: once accepted the
+        /// startup warning dialog is never shown again.
+        #[serde(default, rename = "skipDangerousModePermissionPrompt")]
+        pub skip_dangerous_mode_permission_prompt: bool,
+        /// Bash command prefixes (first word) the user chose to always allow
+        /// from the permission dialog's "Allow commands matching <prefix>*"
+        /// option. Loaded into the prefix allowlist at startup.
+        #[serde(default, rename = "allowedBashPrefixes")]
+        pub allowed_bash_prefixes: Vec<String>,
         /// App version at last launch — used to detect upgrades and show release notes.
         #[serde(default, rename = "lastSeenVersion")]
         pub last_seen_version: Option<String>,
@@ -1055,6 +1311,12 @@ pub mod config {
         /// Per-provider configurations stored in settings.json.
         #[serde(default)]
         pub providers: HashMap<String, ProviderConfig>,
+        /// User-supplied model metadata overrides stored in settings.json,
+        /// keyed by `"provider/model"`. Merged into
+        /// [`Config::model_overrides`] by [`Settings::effective_config`] and
+        /// take precedence over the models.dev catalog.
+        #[serde(default, rename = "modelOverrides", alias = "model_overrides")]
+        pub model_overrides: HashMap<String, ModelOverride>,
         /// User-defined slash command templates.
         #[serde(default)]
         pub commands: HashMap<String, CommandTemplate>,
@@ -1070,6 +1332,56 @@ pub mod config {
         /// Managed agent (manager-executor) configuration.
         #[serde(default)]
         pub managed_agents: Option<ManagedAgentConfig>,
+        /// When true, releasing a drag selection automatically copies it to
+        /// the system clipboard. Defaults to `false` — users opt in by
+        /// setting `"autoCopyOnHighlight": true` in
+        /// `~/.claurst/settings.json`.
+        #[serde(default, rename = "autoCopyOnHighlight")]
+        pub auto_copy_on_highlight: bool,
+        /// Whether to show current working directory in footer. Defaults to true.
+        #[serde(default = "default_true", rename = "showCwd")]
+        pub show_cwd: bool,
+        /// Whether to show git branch in footer. Defaults to true.
+        #[serde(default = "default_true", rename = "showGitBranch")]
+        pub show_git_branch: bool,
+        /// Whether to enable desktop notifications. Defaults to true.
+        #[serde(default = "default_true", rename = "notifications")]
+        pub notifications: bool,
+        /// Whether to show turn duration in output. Defaults to false.
+        #[serde(default, rename = "showTurnDuration")]
+        pub show_turn_duration: bool,
+        /// Whether to reduce motion in UI. Defaults to false.
+        #[serde(default, rename = "reduceMotion")]
+        pub reduce_motion: bool,
+        /// Whether to show terminal progress bars. Defaults to true.
+        #[serde(default = "default_true", rename = "terminalProgressBar")]
+        pub terminal_progress_bar: bool,
+        /// Whether to enable auto-compact. Defaults to true.
+        #[serde(default = "default_true", rename = "autoCompact")]
+        pub auto_compact: bool,
+        /// Maximum number of file suggestions shown in autocomplete. Defaults to 15.
+        #[serde(
+            default = "default_file_autocomplete_limit",
+            rename = "fileAutocompleteLimit"
+        )]
+        pub file_autocomplete_limit: usize,
+        /// Whether to show hidden files in file autocomplete. Defaults to false.
+        #[serde(default, rename = "fileAutocompleteShowHiddenFiles")]
+        pub file_autocomplete_show_hidden_files: bool,
+        /// Whether @ file references are automatically injected into message context. Defaults to true.
+        /// When true: @file auto-injects file contents into your message before sending.
+        /// When false: @ is just autocomplete and reference (no auto-injection).
+        /// Note: This only affects user messages. @include in CLAUDE.md/AGENTS.md always injects with no size limits.
+        #[serde(default = "default_true", rename = "fileInjectionEnabled")]
+        pub file_injection_enabled: bool,
+        /// Maximum file size to auto-inject (in KB). Defaults to 100. Set to 0 for no limit.
+        /// When a file exceeds this limit, users get a warning and can choose to override or cancel.
+        /// Note: @include in CLAUDE.md/AGENTS.md always injects regardless of this limit.
+        #[serde(
+            default = "default_file_injection_max_size",
+            rename = "fileInjectionMaxSize"
+        )]
+        pub file_injection_max_size: usize,
     }
 
     /// A user-defined slash command template.
@@ -1086,7 +1398,7 @@ pub mod config {
     }
 
     /// Configuration for a file formatter tool.
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize, Default)]
     pub struct FormatterConfig {
         /// Command to run, e.g. `["prettier", "--write"]`.
         pub command: Vec<String>,
@@ -1095,12 +1407,6 @@ pub mod config {
         /// Whether this formatter is disabled.
         #[serde(default)]
         pub disabled: bool,
-    }
-
-    impl Default for FormatterConfig {
-        fn default() -> Self {
-            Self { command: Vec::new(), extensions: Vec::new(), disabled: false }
-        }
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1149,7 +1455,19 @@ pub mod config {
         m
     }
 
+    fn is_false(b: &bool) -> bool {
+        !b
+    }
+
     impl Config {
+        /// Whether app-level mouse capture should be enabled. Defaults to `true`
+        /// (capture on) when unset, preserving historical behaviour; users opt out
+        /// via `"mouseCapture": false` to restore native terminal text selection
+        /// and copy/paste (issue #104).
+        pub fn mouse_capture_enabled(&self) -> bool {
+            self.mouse_capture.unwrap_or(true)
+        }
+
         pub fn selected_provider_id(&self) -> &str {
             self.provider
                 .as_deref()
@@ -1175,13 +1493,19 @@ pub mod config {
                 Some("google") => "gemini-2.5-flash",
                 Some("groq") => "llama-3.3-70b-versatile",
                 Some("cerebras") => "llama-3.3-70b",
-                Some("deepseek") => "deepseek-chat",
+                Some("deepseek") => "deepseek-v4-pro",
                 Some("mistral") => "mistral-large-latest",
                 Some("xai") => "grok-2",
                 Some("openrouter") => "anthropic/claude-sonnet-4",
-                Some("togetherai") | Some("together-ai") => "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+                Some("togetherai") | Some("together-ai") => {
+                    "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+                }
                 Some("perplexity") => "sonar-pro",
                 Some("cohere") => "command-r-plus",
+                // DashScope runs as "qwen" at runtime but is "alibaba" in the
+                // models.dev catalog; terminal fallback keeps a qwen id so an
+                // unconfigured Qwen provider never resolves to a claude-* model.
+                Some("qwen") | Some("alibaba") => "qwen3-max",
                 Some("deepinfra") => "meta-llama/Llama-3.3-70B-Instruct",
                 Some("github-copilot") => "gpt-4o",
                 Some("ollama") => "llama3.2",
@@ -1194,8 +1518,6 @@ pub mod config {
                 _ => crate::constants::DEFAULT_MODEL, // Anthropic default
             }
         }
-
-
 
         /// Resolve the effective max-tokens.
         pub fn effective_max_tokens(&self) -> u32 {
@@ -1255,6 +1577,8 @@ pub mod config {
                         .find_map(|var| std::env::var(var).ok().filter(|v| !v.is_empty()))
                 })
                 .or_else(|| crate::AuthStore::load().api_key_for(provider_id))
+                // Support {env:VAR_NAME} patterns in the resolved value
+                .map(|key| substitute_env_vars(&key))
         }
 
         pub fn resolve_anthropic_api_key(&self) -> Option<String> {
@@ -1272,6 +1596,8 @@ pub mod config {
                         .iter()
                         .find_map(|var| std::env::var(var).ok().filter(|v| !v.is_empty()))
                 })
+                // Support {env:VAR_NAME} patterns in the resolved value
+                .map(|key| substitute_env_vars(&key))
         }
 
         /// Resolve the API key for the active provider.
@@ -1283,6 +1609,7 @@ pub mod config {
         /// Returns `(credential, use_bearer_auth)`.
         /// - For Console OAuth flow: credential is the stored API key, bearer=false.
         /// - For Claude.ai OAuth flow: credential is the access token, bearer=true.
+        ///
         /// Silently attempts token refresh when the access token is expired.
         pub async fn resolve_auth_async(&self) -> Option<(String, bool)> {
             if self.selected_provider_id() != "anthropic" {
@@ -1314,25 +1641,43 @@ pub mod config {
                     let refreshed = 'refresh: {
                         let Ok(client) = reqwest::Client::builder()
                             .timeout(std::time::Duration::from_secs(30))
-                            .build() else { break 'refresh None; };
+                            .build()
+                        else {
+                            break 'refresh None;
+                        };
                         let Ok(resp) = client
                             .post(crate::oauth::TOKEN_URL)
                             .header("content-type", "application/json")
                             .json(&body)
                             .send()
-                            .await else { break 'refresh None; };
-                        if !resp.status().is_success() { break 'refresh None; }
-                        let Ok(data) = resp.json::<serde_json::Value>().await else { break 'refresh None; };
+                            .await
+                        else {
+                            break 'refresh None;
+                        };
+                        if !resp.status().is_success() {
+                            break 'refresh None;
+                        }
+                        let Ok(data) = resp.json::<serde_json::Value>().await else {
+                            break 'refresh None;
+                        };
                         let new_at = data["access_token"].as_str().unwrap_or("").to_string();
-                        if new_at.is_empty() { break 'refresh None; }
+                        if new_at.is_empty() {
+                            break 'refresh None;
+                        }
                         let new_rt = data["refresh_token"].as_str().map(String::from);
                         let exp_in = data["expires_in"].as_u64().unwrap_or(3600);
                         let exp_ms = chrono::Utc::now().timestamp_millis() + (exp_in as i64 * 1000);
                         let scopes: Vec<String> = data["scope"]
-                            .as_str().unwrap_or("").split_whitespace().map(String::from).collect();
+                            .as_str()
+                            .unwrap_or("")
+                            .split_whitespace()
+                            .map(String::from)
+                            .collect();
                         let mut r = tokens.clone();
                         r.access_token = new_at;
-                        if let Some(nrt) = new_rt { r.refresh_token = Some(nrt); }
+                        if let Some(nrt) = new_rt {
+                            r.refresh_token = Some(nrt);
+                        }
                         r.expires_at_ms = Some(exp_ms);
                         r.scopes = scopes;
                         let _ = r.save().await;
@@ -1346,11 +1691,9 @@ pub mod config {
                 tokens
             };
 
-            if let Some(cred) = tokens.effective_credential() {
-                Some((cred.to_string(), tokens.uses_bearer_auth()))
-            } else {
-                None
-            }
+            tokens
+                .effective_credential()
+                .map(|cred| (cred.to_string(), tokens.uses_bearer_auth()))
         }
 
         pub fn resolve_provider_api_base(&self, provider_id: &str) -> Option<String> {
@@ -1368,6 +1711,8 @@ pub mod config {
                         .filter(|base| !base.is_empty())
                 })
                 .or_else(|| default_api_base_for_provider(provider_id).map(str::to_owned))
+                // Support {env:VAR_NAME} patterns in the resolved base URL
+                .map(|base| substitute_env_vars(&base))
         }
 
         pub fn resolve_anthropic_api_base(&self) -> String {
@@ -1380,14 +1725,67 @@ pub mod config {
             self.resolve_provider_api_base(self.selected_provider_id())
                 .unwrap_or_else(|| self.resolve_anthropic_api_base())
         }
+
+        /// Resolve the total request timeout (in seconds) for `provider_id`.
+        ///
+        /// Precedence: per-provider [`ProviderConfig::request_timeout_secs`] >
+        /// global [`Config::request_timeout_secs`] > [`DEFAULT_REQUEST_TIMEOUT_SECS`].
+        /// Zero values are treated as unset.
+        pub fn resolve_request_timeout_secs(&self, provider_id: &str) -> u64 {
+            self.provider_configs
+                .get(provider_id)
+                .and_then(|provider| provider.request_timeout_secs)
+                .filter(|&secs| secs > 0)
+                .or_else(|| self.request_timeout_secs.filter(|&secs| secs > 0))
+                .unwrap_or(DEFAULT_REQUEST_TIMEOUT_SECS)
+        }
+
+        /// Resolve the request timeout for the active provider.
+        pub fn resolve_request_timeout_secs_active(&self) -> u64 {
+            self.resolve_request_timeout_secs(self.selected_provider_id())
+        }
     }
 
     impl Settings {
-        /// The per-user configuration directory (`~/.claurst`).
+        /// The canonical per-user claurst home directory — the single source of
+        /// truth for where claurst keeps everything (settings, sessions,
+        /// accounts, skills, …). Every subdirectory (`config_dir().join("sessions")`,
+        /// `.join("accounts")`, …) lives under this one root.
+        ///
+        /// Resolution precedence (see issue #207 — XDG Base Directory support,
+        /// kept fully back-compatible so existing installs are untouched):
+        ///
+        /// 1. **`$CLAURST_HOME`** — if set and non-empty, used verbatim.
+        /// 2. **Legacy `~/.claurst`** — if that directory already exists, it is
+        ///    reused so existing users need no migration.
+        /// 3. **XDG** — `$XDG_CONFIG_HOME/claurst` when `$XDG_CONFIG_HOME` is set
+        ///    (and absolute, per the spec), otherwise `~/.config/claurst`. Fresh
+        ///    installs land here.
         pub fn config_dir() -> PathBuf {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".claurst")
+            // 1. Explicit override wins, used verbatim.
+            if let Some(explicit) = std::env::var_os("CLAURST_HOME") {
+                if !explicit.is_empty() {
+                    return PathBuf::from(explicit);
+                }
+            }
+
+            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+
+            // 2. Back-compat: an existing legacy `~/.claurst` is used as-is.
+            let legacy = home.join(".claurst");
+            if legacy.is_dir() {
+                return legacy;
+            }
+
+            // 3. XDG config location for fresh installs.
+            if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
+                let xdg = PathBuf::from(xdg);
+                // Per the XDG spec a relative $XDG_CONFIG_HOME must be ignored.
+                if xdg.is_absolute() {
+                    return xdg.join("claurst");
+                }
+            }
+            home.join(".config").join("claurst")
         }
 
         /// Full path to the global settings JSON file.
@@ -1395,48 +1793,98 @@ pub mod config {
             Self::config_dir().join("settings.json")
         }
 
-        /// Load settings from disk, returning defaults when the file is missing.
-        pub async fn load() -> anyhow::Result<Self> {
-            let path = Self::global_settings_path();
+        fn parse_file(content: &str, path: &Path) -> anyhow::Result<Self> {
+            serde_json::from_str(content).map_err(|error| {
+                anyhow::anyhow!(
+                    "Failed to parse settings file {}: {}. The file was not modified; fix the JSON and restart Claurst.",
+                    path.display(),
+                    error
+                )
+            })
+        }
+
+        async fn load_from_path(path: &Path) -> anyhow::Result<Self> {
             if path.exists() {
-                let content = tokio::fs::read_to_string(&path).await?;
-                Ok(serde_json::from_str(&content).unwrap_or_default())
+                let content = tokio::fs::read_to_string(path).await?;
+                Self::parse_file(&content, path)
             } else {
                 Ok(Self::default())
             }
         }
 
-        /// Persist settings to disk.
-        pub async fn save(&self) -> anyhow::Result<()> {
-            let path = Self::global_settings_path();
+        fn load_from_path_sync(path: &Path) -> anyhow::Result<Self> {
+            if path.exists() {
+                let content = std::fs::read_to_string(path)?;
+                Self::parse_file(&content, path)
+            } else {
+                Ok(Self::default())
+            }
+        }
+
+        async fn save_to_path(&self, path: &Path) -> anyhow::Result<()> {
+            if path.exists() {
+                let content = tokio::fs::read_to_string(path).await?;
+                Self::parse_file(&content, path).map_err(|error| {
+                    anyhow::anyhow!(
+                        "Refusing to overwrite malformed settings file {}: {}",
+                        path.display(),
+                        error
+                    )
+                })?;
+            }
             if let Some(parent) = path.parent() {
                 tokio::fs::create_dir_all(parent).await?;
             }
             let content = serde_json::to_string_pretty(self)?;
-            tokio::fs::write(&path, content).await?;
+            tokio::fs::write(path, content).await?;
             Ok(())
+        }
+
+        fn save_to_path_sync(&self, path: &Path) -> anyhow::Result<()> {
+            if path.exists() {
+                let content = std::fs::read_to_string(path)?;
+                Self::parse_file(&content, path).map_err(|error| {
+                    anyhow::anyhow!(
+                        "Refusing to overwrite malformed settings file {}: {}",
+                        path.display(),
+                        error
+                    )
+                })?;
+            }
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let content = serde_json::to_string_pretty(self)?;
+            std::fs::write(path, content)?;
+            Ok(())
+        }
+
+        /// Load settings from disk, returning defaults when the file is missing.
+        ///
+        /// A malformed file is returned as an error and is never replaced with
+        /// defaults.
+        pub async fn load() -> anyhow::Result<Self> {
+            let path = Self::global_settings_path();
+            Self::load_from_path(&path).await
+        }
+
+        /// Persist settings to disk without overwriting a malformed file.
+        pub async fn save(&self) -> anyhow::Result<()> {
+            let path = Self::global_settings_path();
+            self.save_to_path(&path).await
         }
 
         /// Synchronous variant used by pre-session commands.
         pub fn load_sync() -> anyhow::Result<Self> {
             let path = Self::global_settings_path();
-            if path.exists() {
-                let content = std::fs::read_to_string(&path)?;
-                Ok(serde_json::from_str(&content).unwrap_or_default())
-            } else {
-                Ok(Self::default())
-            }
+            Self::load_from_path_sync(&path)
         }
 
-        /// Synchronous variant used by pre-session commands.
+        /// Synchronous variant used by pre-session commands. Refuses to
+        /// overwrite a malformed file.
         pub fn save_sync(&self) -> anyhow::Result<()> {
             let path = Self::global_settings_path();
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            let content = serde_json::to_string_pretty(self)?;
-            std::fs::write(&path, content)?;
-            Ok(())
+            self.save_to_path_sync(&path)
         }
 
         /// Return the effective `Config`, merging top-level provider settings
@@ -1453,14 +1901,31 @@ pub mod config {
             }
             // Merge top-level `providers` map into config.provider_configs.
             for (id, pc) in &self.providers {
-                config.provider_configs.entry(id.clone()).or_insert_with(|| pc.clone());
+                config
+                    .provider_configs
+                    .entry(id.clone())
+                    .or_insert_with(|| pc.clone());
+            }
+            // Merge top-level `modelOverrides` into config.model_overrides
+            // (nested `config` block wins for keys present in both).
+            for (id, ov) in &self.model_overrides {
+                config
+                    .model_overrides
+                    .entry(id.clone())
+                    .or_insert_with(|| ov.clone());
             }
             // Copy top-level formatters and commands into config.
             for (k, v) in &self.formatter {
-                config.formatter.entry(k.clone()).or_insert_with(|| v.clone());
+                config
+                    .formatter
+                    .entry(k.clone())
+                    .or_insert_with(|| v.clone());
             }
             for (k, v) in &self.commands {
-                config.commands.entry(k.clone()).or_insert_with(|| v.clone());
+                config
+                    .commands
+                    .entry(k.clone())
+                    .or_insert_with(|| v.clone());
             }
             // Copy top-level agent definitions into config.
             for (k, v) in &self.agents {
@@ -1477,19 +1942,35 @@ pub mod config {
                     config.skills.urls.push(u.clone());
                 }
             }
+            // Copy file autocomplete and injection settings from the top-level Settings
+            // fields, but only when they were explicitly set (differ from their defaults).
+            // If they're at defaults, the nested "config" section value (already in `config`
+            // via the clone above) takes precedence.
+            if self.file_autocomplete_limit != default_file_autocomplete_limit() {
+                config.file_autocomplete_limit = self.file_autocomplete_limit;
+            }
+            if self.file_autocomplete_show_hidden_files {
+                config.file_autocomplete_show_hidden_files = true;
+            }
+            if self.file_injection_enabled != default_true() {
+                config.file_injection_enabled = self.file_injection_enabled;
+            }
+            if self.file_injection_max_size != default_file_injection_max_size() {
+                config.file_injection_max_size = self.file_injection_max_size;
+            }
             config
         }
 
         /// Load settings from all config levels and merge them.
         /// Priority: project > global.
-        pub async fn load_hierarchical(cwd: &std::path::Path) -> Self {
+        pub async fn load_hierarchical(cwd: &std::path::Path) -> anyhow::Result<Self> {
             // 1. Load global settings.
-            let mut merged = Self::load().await.unwrap_or_default();
+            let mut merged = Self::load().await?;
             // 2. Find and merge project settings (project wins).
             if let Some(project_settings) = Self::find_project_settings(cwd).await {
                 merged = Self::merge(merged, project_settings);
             }
-            merged
+            Ok(merged)
         }
 
         /// Walk up from `cwd` looking for `.claurst/settings.json` or
@@ -1504,7 +1985,20 @@ pub mod config {
                     if candidate.exists() && candidate != global_path {
                         if let Ok(content) = tokio::fs::read_to_string(&candidate).await {
                             let stripped = strip_jsonc_comments(&content);
-                            if let Ok(s) = serde_json::from_str::<Self>(&stripped) {
+                            if let Ok(mut s) = serde_json::from_str::<Self>(&stripped) {
+                                // SECURITY: tag every server defined by this
+                                // repository as project-origin so it gets gated
+                                // behind explicit approval before launching.
+                                // `origin` is `#[serde(skip)]`, so the file can
+                                // never set it itself — we always assign here.
+                                for server in &mut s.config.mcp_servers {
+                                    server.origin = McpServerOrigin::Project;
+                                }
+                                for ps in s.projects.values_mut() {
+                                    for server in &mut ps.mcp_servers {
+                                        server.origin = McpServerOrigin::Project;
+                                    }
+                                }
                                 return Some(s);
                             }
                         }
@@ -1529,7 +2023,9 @@ pub mod config {
                 mut base: HashMap<K, V>,
                 over: HashMap<K, V>,
             ) -> HashMap<K, V> {
-                for (k, v) in over { base.insert(k, v); }
+                for (k, v) in over {
+                    base.insert(k, v);
+                }
                 base
             }
             // Merge the embedded Config structs.
@@ -1548,61 +2044,199 @@ pub mod config {
                 },
                 verbose: over.config.verbose || base.config.verbose,
                 output_format: over.config.output_format,
-                mcp_servers: { let mut v = base.config.mcp_servers; v.extend(over.config.mcp_servers); v },
-                lsp_servers: { let mut v = base.config.lsp_servers; v.extend(over.config.lsp_servers); v },
-                allowed_tools: { let mut v = base.config.allowed_tools; v.extend(over.config.allowed_tools); v.dedup(); v },
-                disallowed_tools: { let mut v = base.config.disallowed_tools; v.extend(over.config.disallowed_tools); v.dedup(); v },
+                mcp_servers: {
+                    let mut v = base.config.mcp_servers;
+                    v.extend(over.config.mcp_servers);
+                    v
+                },
+                lsp_servers: {
+                    let mut v = base.config.lsp_servers;
+                    v.extend(over.config.lsp_servers);
+                    v
+                },
+                allowed_tools: {
+                    let mut v = base.config.allowed_tools;
+                    v.extend(over.config.allowed_tools);
+                    v.dedup();
+                    v
+                },
+                disallowed_tools: {
+                    let mut v = base.config.disallowed_tools;
+                    v.extend(over.config.disallowed_tools);
+                    v.dedup();
+                    v
+                },
                 env: merge_map(base.config.env, over.config.env),
-                enable_all_mcp_servers: over.config.enable_all_mcp_servers || base.config.enable_all_mcp_servers,
-                custom_system_prompt: over.config.custom_system_prompt.or(base.config.custom_system_prompt),
-                append_system_prompt: over.config.append_system_prompt.or(base.config.append_system_prompt),
-                disable_claude_mds: over.config.disable_claude_mds || base.config.disable_claude_mds,
+                enable_all_mcp_servers: over.config.enable_all_mcp_servers
+                    || base.config.enable_all_mcp_servers,
+                custom_system_prompt: over
+                    .config
+                    .custom_system_prompt
+                    .or(base.config.custom_system_prompt),
+                append_system_prompt: over
+                    .config
+                    .append_system_prompt
+                    .or(base.config.append_system_prompt),
+                disable_claude_mds: over.config.disable_claude_mds
+                    || base.config.disable_claude_mds,
                 project_dir: over.config.project_dir.or(base.config.project_dir),
-                workspace_paths: { let mut v = base.config.workspace_paths; v.extend(over.config.workspace_paths); v },
-                additional_dirs: { let mut v = base.config.additional_dirs; v.extend(over.config.additional_dirs); v },
+                workspace_paths: {
+                    let mut v = base.config.workspace_paths;
+                    v.extend(over.config.workspace_paths);
+                    v
+                },
+                additional_dirs: {
+                    let mut v = base.config.additional_dirs;
+                    v.extend(over.config.additional_dirs);
+                    v
+                },
                 hooks: merge_map(base.config.hooks, over.config.hooks),
                 provider: over.config.provider.or(base.config.provider),
-                provider_configs: merge_map(base.config.provider_configs, over.config.provider_configs),
+                provider_configs: merge_map(
+                    base.config.provider_configs,
+                    over.config.provider_configs,
+                ),
+                model_overrides: merge_map(
+                    base.config.model_overrides,
+                    over.config.model_overrides,
+                ),
                 formatter: merge_map(base.config.formatter, over.config.formatter),
                 commands: merge_map(base.config.commands, over.config.commands),
                 agents: merge_map(base.config.agents, over.config.agents),
                 skills: {
                     let mut paths = base.config.skills.paths;
-                    for p in over.config.skills.paths { if !paths.contains(&p) { paths.push(p); } }
+                    for p in over.config.skills.paths {
+                        if !paths.contains(&p) {
+                            paths.push(p);
+                        }
+                    }
                     let mut urls = base.config.skills.urls;
-                    for u in over.config.skills.urls { if !urls.contains(&u) { urls.push(u); } }
+                    for u in over.config.skills.urls {
+                        if !urls.contains(&u) {
+                            urls.push(u);
+                        }
+                    }
                     SkillsConfig { paths, urls }
                 },
                 managed_agents: over.config.managed_agents.or(base.config.managed_agents),
                 password_store: PasswordStoreConfig {
-                    store_path: over.config.password_store.store_path.or(base.config.password_store.store_path),
-                    signing_key: over.config.password_store.signing_key.or(base.config.password_store.signing_key),
-                    require_git: over.config.password_store.require_git || base.config.password_store.require_git,
+                    store_path: over
+                        .config
+                        .password_store
+                        .store_path
+                        .or(base.config.password_store.store_path),
+                    signing_key: over
+                        .config
+                        .password_store
+                        .signing_key
+                        .or(base.config.password_store.signing_key),
+                    require_git: over.config.password_store.require_git
+                        || base.config.password_store.require_git,
                 },
+                auto_commits: over.config.auto_commits.or(base.config.auto_commits),
+                mouse_capture: over.config.mouse_capture.or(base.config.mouse_capture),
+                cursor_blink_enabled: over.config.cursor_blink_enabled
+                    || base.config.cursor_blink_enabled,
+                file_autocomplete_limit: if over.config.file_autocomplete_limit != 0 {
+                    over.config.file_autocomplete_limit
+                } else {
+                    base.config.file_autocomplete_limit
+                },
+                file_autocomplete_show_hidden_files: over
+                    .config
+                    .file_autocomplete_show_hidden_files
+                    || base.config.file_autocomplete_show_hidden_files,
+                file_injection_enabled: over.config.file_injection_enabled
+                    || base.config.file_injection_enabled,
+                file_injection_max_size: if over.config.file_injection_max_size != 0 {
+                    over.config.file_injection_max_size
+                } else {
+                    base.config.file_injection_max_size
+                },
+                request_timeout_secs: over
+                    .config
+                    .request_timeout_secs
+                    .or(base.config.request_timeout_secs),
             };
             Self {
                 config: merged_config,
                 version: over.version.or(base.version),
                 projects: merge_map(base.projects, over.projects),
-                remote_control_at_startup: over.remote_control_at_startup || base.remote_control_at_startup,
-                permission_rules: { let mut v = base.permission_rules; v.extend(over.permission_rules); v },
-                enabled_plugins: { let mut s = base.enabled_plugins; s.extend(over.enabled_plugins); s },
-                disabled_plugins: { let mut s = base.disabled_plugins; s.extend(over.disabled_plugins); s },
-                has_completed_onboarding: over.has_completed_onboarding || base.has_completed_onboarding,
+                remote_control_at_startup: over.remote_control_at_startup
+                    || base.remote_control_at_startup,
+                // SECURITY: only the user's global settings may grant blanket
+                // trust to project MCP servers. A project's own settings file
+                // (`over`) must NOT be able to flip this on — otherwise a
+                // malicious repo could set `trustProjectMcpServers: true` to
+                // bypass the approval gate entirely.
+                trust_project_mcp_servers: base.trust_project_mcp_servers,
+                // SECURITY: same reasoning — these silence approval prompts,
+                // so only the user's global settings may set them. A project
+                // settings file must not be able to pre-accept bypass mode or
+                // pre-approve bash command prefixes.
+                skip_dangerous_mode_permission_prompt: base.skip_dangerous_mode_permission_prompt,
+                allowed_bash_prefixes: base.allowed_bash_prefixes,
+                permission_rules: {
+                    let mut v = base.permission_rules;
+                    v.extend(over.permission_rules);
+                    v
+                },
+                enabled_plugins: {
+                    let mut s = base.enabled_plugins;
+                    s.extend(over.enabled_plugins);
+                    s
+                },
+                disabled_plugins: {
+                    let mut s = base.disabled_plugins;
+                    s.extend(over.disabled_plugins);
+                    s
+                },
+                has_completed_onboarding: over.has_completed_onboarding
+                    || base.has_completed_onboarding,
                 last_seen_version: over.last_seen_version.or(base.last_seen_version),
                 provider: over.provider.or(base.provider),
                 providers: merge_map(base.providers, over.providers),
+                model_overrides: merge_map(base.model_overrides, over.model_overrides),
                 commands: merge_map(base.commands, over.commands),
                 formatter: merge_map(base.formatter, over.formatter),
                 agents: merge_map(base.agents, over.agents),
                 skills: {
                     let mut paths = base.skills.paths;
-                    for p in over.skills.paths { if !paths.contains(&p) { paths.push(p); } }
+                    for p in over.skills.paths {
+                        if !paths.contains(&p) {
+                            paths.push(p);
+                        }
+                    }
                     let mut urls = base.skills.urls;
-                    for u in over.skills.urls { if !urls.contains(&u) { urls.push(u); } }
+                    for u in over.skills.urls {
+                        if !urls.contains(&u) {
+                            urls.push(u);
+                        }
+                    }
                     SkillsConfig { paths, urls }
                 },
                 managed_agents: over.managed_agents.or(base.managed_agents),
+                auto_copy_on_highlight: over.auto_copy_on_highlight || base.auto_copy_on_highlight,
+                notifications: over.notifications || base.notifications,
+                show_turn_duration: over.show_turn_duration || base.show_turn_duration,
+                reduce_motion: over.reduce_motion || base.reduce_motion,
+                terminal_progress_bar: over.terminal_progress_bar || base.terminal_progress_bar,
+                show_cwd: over.show_cwd || base.show_cwd,
+                show_git_branch: over.show_git_branch || base.show_git_branch,
+                auto_compact: over.auto_compact || base.auto_compact,
+                file_autocomplete_limit: if over.file_autocomplete_limit != 0 {
+                    over.file_autocomplete_limit
+                } else {
+                    base.file_autocomplete_limit
+                },
+                file_autocomplete_show_hidden_files: over.file_autocomplete_show_hidden_files
+                    || base.file_autocomplete_show_hidden_files,
+                file_injection_enabled: over.file_injection_enabled || base.file_injection_enabled,
+                file_injection_max_size: if over.file_injection_max_size != 0 {
+                    over.file_injection_max_size
+                } else {
+                    base.file_injection_max_size
+                },
             }
         }
     }
@@ -1617,7 +2251,9 @@ pub mod config {
 
         while let Some(ch) = chars.next() {
             if in_string {
-                if ch == '"' && prev_char != '\\' { in_string = false; }
+                if ch == '"' && prev_char != '\\' {
+                    in_string = false;
+                }
                 result.push(ch);
                 prev_char = ch;
                 continue;
@@ -1632,15 +2268,24 @@ pub mod config {
                 match chars.peek() {
                     Some('/') => {
                         // Line comment — skip to end of line.
-                        for c in chars.by_ref() { if c == '\n' { result.push('\n'); break; } }
+                        for c in chars.by_ref() {
+                            if c == '\n' {
+                                result.push('\n');
+                                break;
+                            }
+                        }
                     }
                     Some('*') => {
                         // Block comment — skip until `*/`.
                         chars.next();
                         let mut prev = '\0';
                         for c in chars.by_ref() {
-                            if prev == '*' && c == '/' { break; }
-                            if c == '\n' { result.push('\n'); }
+                            if prev == '*' && c == '/' {
+                                break;
+                            }
+                            if c == '\n' {
+                                result.push('\n');
+                            }
                             prev = c;
                         }
                     }
@@ -1662,19 +2307,229 @@ pub mod config {
         loop {
             match result.find("{env:") {
                 None => break,
-                Some(start) => {
-                    match result[start..].find('}') {
-                        None => break,
-                        Some(rel_end) => {
-                            let var_name = result[start + 5..start + rel_end].to_string();
-                            let value = std::env::var(&var_name).unwrap_or_default();
-                            result.replace_range(start..start + rel_end + 1, &value);
-                        }
+                Some(start) => match result[start..].find('}') {
+                    None => break,
+                    Some(rel_end) => {
+                        let var_name = result[start + 5..start + rel_end].to_string();
+                        let value = std::env::var(&var_name).unwrap_or_default();
+                        result.replace_range(start..start + rel_end + 1, &value);
                     }
-                }
+                },
             }
         }
         result
+    }
+
+    #[cfg(test)]
+    mod settings_io_tests {
+        use super::*;
+
+        const MALFORMED_SETTINGS: &str = r#"{"config":{"model":"test-model",}}"#;
+
+        #[test]
+        fn sync_load_reports_malformed_settings_without_modifying_them() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("settings.json");
+            std::fs::write(&path, MALFORMED_SETTINGS).unwrap();
+
+            let error = Settings::load_from_path_sync(&path).unwrap_err();
+
+            assert!(error.to_string().contains("Failed to parse settings file"));
+            assert!(error.to_string().contains(&path.display().to_string()));
+            assert!(error.to_string().contains("The file was not modified"));
+            assert_eq!(std::fs::read_to_string(path).unwrap(), MALFORMED_SETTINGS);
+        }
+
+        #[test]
+        fn sync_save_refuses_to_overwrite_malformed_settings() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("settings.json");
+            std::fs::write(&path, MALFORMED_SETTINGS).unwrap();
+            let mut replacement = Settings::default();
+            replacement.config.model = Some("replacement".to_string());
+
+            let error = replacement.save_to_path_sync(&path).unwrap_err();
+
+            assert!(error
+                .to_string()
+                .contains("Refusing to overwrite malformed settings file"));
+            assert_eq!(std::fs::read_to_string(path).unwrap(), MALFORMED_SETTINGS);
+        }
+
+        #[tokio::test]
+        async fn async_load_and_save_preserve_malformed_settings() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("settings.json");
+            tokio::fs::write(&path, MALFORMED_SETTINGS).await.unwrap();
+
+            let load_error = Settings::load_from_path(&path).await.unwrap_err();
+            assert!(load_error
+                .to_string()
+                .contains("Failed to parse settings file"));
+
+            let save_error = Settings::default().save_to_path(&path).await.unwrap_err();
+            assert!(save_error
+                .to_string()
+                .contains("Refusing to overwrite malformed settings file"));
+            assert_eq!(
+                tokio::fs::read_to_string(path).await.unwrap(),
+                MALFORMED_SETTINGS
+            );
+        }
+    }
+
+    #[cfg(test)]
+    mod request_timeout_tests {
+        use super::*;
+
+        #[test]
+        fn defaults_to_600_when_unset() {
+            let config = Config::default();
+            assert_eq!(config.request_timeout_secs, None);
+            assert_eq!(
+                config.resolve_request_timeout_secs("openai"),
+                DEFAULT_REQUEST_TIMEOUT_SECS
+            );
+            assert_eq!(DEFAULT_REQUEST_TIMEOUT_SECS, 600);
+        }
+
+        #[test]
+        fn global_request_timeout_serde_roundtrips_with_camelcase_key() {
+            let config = Config {
+                request_timeout_secs: Some(1800),
+                ..Default::default()
+            };
+            // Serialises with the documented camelCase key.
+            let json = serde_json::to_string(&config).expect("serialise");
+            assert!(
+                json.contains("\"requestTimeoutSecs\":1800"),
+                "expected camelCase key in: {json}"
+            );
+            // Round-trips back and threads through the resolver.
+            let parsed: Config = serde_json::from_str(&json).expect("deserialise");
+            assert_eq!(parsed.request_timeout_secs, Some(1800));
+            assert_eq!(parsed.resolve_request_timeout_secs("ollama"), 1800);
+        }
+
+        #[test]
+        fn snake_case_alias_also_parses() {
+            // Patch a fully-serialised config to use the snake_case alias and
+            // confirm it still deserialises (back-compat with snake_case keys).
+            let mut value = serde_json::to_value(Config::default()).expect("to_value");
+            let obj = value.as_object_mut().unwrap();
+            obj.remove("requestTimeoutSecs");
+            obj.insert("request_timeout_secs".to_string(), serde_json::json!(900));
+            let parsed: Config = serde_json::from_value(value).expect("alias should parse");
+            assert_eq!(parsed.request_timeout_secs, Some(900));
+        }
+
+        #[test]
+        fn per_provider_override_wins_over_global() {
+            let mut config = Config {
+                request_timeout_secs: Some(1200),
+                ..Default::default()
+            };
+            let provider = ProviderConfig {
+                request_timeout_secs: Some(3600),
+                ..Default::default()
+            };
+            config
+                .provider_configs
+                .insert("ollama".to_string(), provider);
+            // Per-provider override applies to ollama.
+            assert_eq!(config.resolve_request_timeout_secs("ollama"), 3600);
+            // Other providers fall back to the global value.
+            assert_eq!(config.resolve_request_timeout_secs("openai"), 1200);
+        }
+
+        #[test]
+        fn effective_config_merges_top_level_provider_timeout() {
+            let mut settings = Settings::default();
+            settings.config.request_timeout_secs = Some(1200);
+            let provider = ProviderConfig {
+                request_timeout_secs: Some(3600),
+                ..Default::default()
+            };
+            settings.providers.insert("ollama".to_string(), provider);
+            let config = settings.effective_config();
+            assert_eq!(config.resolve_request_timeout_secs("ollama"), 3600);
+            assert_eq!(config.resolve_request_timeout_secs("openai"), 1200);
+        }
+
+        #[test]
+        fn effective_config_merges_top_level_model_overrides() {
+            let mut settings = Settings::default();
+            // Nested `config` block wins for a key present in both.
+            settings.config.model_overrides.insert(
+                "custom-openai/a".to_string(),
+                ModelOverride {
+                    context_window: Some(111),
+                    ..Default::default()
+                },
+            );
+            settings.model_overrides.insert(
+                "custom-openai/a".to_string(),
+                ModelOverride {
+                    context_window: Some(999),
+                    ..Default::default()
+                },
+            );
+            // Top-level-only key is folded in.
+            settings.model_overrides.insert(
+                "custom-openai/b".to_string(),
+                ModelOverride {
+                    context_window: Some(222),
+                    ..Default::default()
+                },
+            );
+            let config = settings.effective_config();
+            assert_eq!(
+                config.model_overrides["custom-openai/a"].context_window,
+                Some(111)
+            );
+            assert_eq!(
+                config.model_overrides["custom-openai/b"].context_window,
+                Some(222)
+            );
+        }
+
+        #[test]
+        fn model_override_accepts_camel_and_snake_case() {
+            // Top-level camelCase key `modelOverrides`, camelCase fields.
+            let camel = r#"{
+                "modelOverrides": {
+                    "custom-openai/x": { "contextWindow": 32768, "maxOutputTokens": 4096, "name": "X" }
+                }
+            }"#;
+            let s: Settings = serde_json::from_str(camel).unwrap();
+            let ov = &s.model_overrides["custom-openai/x"];
+            assert_eq!(ov.context_window, Some(32768));
+            assert_eq!(ov.max_output_tokens, Some(4096));
+            assert_eq!(ov.name.as_deref(), Some("X"));
+
+            // snake_case top-level alias `model_overrides` and snake_case fields.
+            let snake = r#"{
+                "model_overrides": {
+                    "ollama/y": { "context_window": 262144, "status": "beta" }
+                }
+            }"#;
+            let s: Settings = serde_json::from_str(snake).unwrap();
+            let ov = &s.model_overrides["ollama/y"];
+            assert_eq!(ov.context_window, Some(262144));
+            assert_eq!(ov.status.as_deref(), Some("beta"));
+        }
+
+        #[test]
+        fn zero_is_treated_as_unset() {
+            let config = Config {
+                request_timeout_secs: Some(0),
+                ..Default::default()
+            };
+            assert_eq!(
+                config.resolve_request_timeout_secs("openai"),
+                DEFAULT_REQUEST_TIMEOUT_SECS
+            );
+        }
     }
 }
 
@@ -1700,6 +2555,7 @@ pub mod constants {
 
     // API endpoints & headers
     pub const ANTHROPIC_API_BASE: &str = "https://api.anthropic.com";
+    pub const MINIMAX_ANTHROPIC_API_BASE: &str = "https://api.minimax.io/anthropic";
     pub const ANTHROPIC_API_VERSION: &str = "2023-06-01";
     pub const ANTHROPIC_BETA_HEADER: &str =
         "interleaved-thinking-2025-05-14,token-efficient-tools-2025-02-19,files-api-2025-04-14,\
@@ -1782,10 +2638,7 @@ pub mod context {
 
             // Platform information
             parts.push(format!("Platform: {}", std::env::consts::OS));
-            parts.push(format!(
-                "Working directory: {}",
-                self.cwd.display()
-            ));
+            parts.push(format!("Working directory: {}", self.cwd.display()));
 
             if let Some(git_context) = self.get_git_context().await {
                 parts.push(git_context);
@@ -1804,9 +2657,7 @@ pub mod context {
         pub async fn build_user_context(&self) -> String {
             let mut parts = vec![];
 
-            let date = chrono::Local::now()
-                .format("%A, %B %d, %Y")
-                .to_string();
+            let date = chrono::Local::now().format("%A, %B %d, %Y").to_string();
             parts.push(format!("Today's date is {}.", date));
 
             if !self.disable_claude_mds {
@@ -1854,10 +2705,10 @@ pub mod context {
         async fn find_and_read_claude_md(&self) -> Option<String> {
             let mut claude_mds = vec![];
 
-            // Global ~/.claurst/AGENTS.md
-            if let Some(home) = dirs::home_dir() {
-                let global_claude_md =
-                    home.join(".claurst").join(crate::constants::CLAUDE_MD_FILENAME);
+            // Global <claurst home>/AGENTS.md
+            {
+                let global_claude_md = crate::config::Settings::config_dir()
+                    .join(crate::constants::CLAUDE_MD_FILENAME);
                 if global_claude_md.exists() {
                     if let Ok(content) = tokio::fs::read_to_string(&global_claude_md).await {
                         claude_mds.push(format!(
@@ -2071,13 +2922,7 @@ pub mod permissions {
         level: PermissionLevel,
     ) -> String {
         match level {
-            PermissionLevel::Execute => {
-                let cmd = path.unwrap_or(description);
-                format!(
-                    "Bash wants to run: `{}`\nThis will execute a shell command.",
-                    cmd
-                )
-            }
+            PermissionLevel::Execute => description.to_string(),
             PermissionLevel::Write => {
                 let target = path.unwrap_or(description);
                 let extra = if target.contains("/etc/") || target.contains("\\etc\\") {
@@ -2088,10 +2933,7 @@ pub mod permissions {
                 } else {
                     "\nThis will write to the filesystem."
                 };
-                format!(
-                    "{} wants to write to `{}`{}",
-                    tool_name, target, extra
-                )
+                format!("{} wants to write to `{}`{}", tool_name, target, extra)
             }
             PermissionLevel::Network => {
                 let url = path.unwrap_or(description);
@@ -2110,6 +2952,28 @@ pub mod permissions {
     // -----------------------------------------------------------------------
     // PermissionManager
     // -----------------------------------------------------------------------
+
+    /// Returns true when `path` falls under the active workspace roots.
+    fn is_path_within_allowed_roots(
+        path: &str,
+        working_dir: Option<&std::path::Path>,
+        allowed_roots: &[std::path::PathBuf],
+    ) -> bool {
+        let canonical_path =
+            std::fs::canonicalize(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
+
+        let mut roots: Vec<std::path::PathBuf> = Vec::new();
+        if let Some(root) = working_dir {
+            roots.push(std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()));
+        }
+        roots.extend(
+            allowed_roots
+                .iter()
+                .map(|root| std::fs::canonicalize(root).unwrap_or_else(|_| root.clone())),
+        );
+
+        roots.iter().any(|root| canonical_path.starts_with(root))
+    }
 
     /// Pending permission request waiting for resolution (e.g. from a bridge
     /// remote peer or the interactive TUI dialog).
@@ -2171,6 +3035,8 @@ pub mod permissions {
             tool_name: &str,
             description: &str,
             path: Option<&str>,
+            working_dir: Option<&std::path::Path>,
+            allowed_roots: &[std::path::PathBuf],
         ) -> PermissionDecision {
             use crate::config::PermissionMode;
 
@@ -2211,29 +3077,53 @@ pub mod permissions {
                 return PermissionDecision::Allow;
             }
 
-            // Step 4 — AcceptEdits auto-allows everything
-            if self.mode == PermissionMode::AcceptEdits {
+            let level = match PermissionLevel::for_tool(tool_name) {
+                PermissionLevel::Read
+                    if !matches!(
+                        tool_name,
+                        "Read"
+                            | "Glob"
+                            | "Grep"
+                            | "ListMcpResources"
+                            | "ReadMcpResource"
+                            | "LSP"
+                            | "Skill"
+                    ) =>
+                {
+                    PermissionLevel::Execute
+                }
+                other => other,
+            };
+            let read_in_workspace = path.is_some_and(|target| {
+                is_path_within_allowed_roots(target, working_dir, allowed_roots)
+            });
+            let should_ask_read = match tool_name {
+                "ListMcpResources" | "ReadMcpResource" => true,
+                _ if matches!(level, PermissionLevel::Read) && path.is_some() => !read_in_workspace,
+                _ => false,
+            };
+
+            // Step 4 — AcceptEdits: only auto-allow Edit; everything else keeps normal checks.
+            if self.mode == PermissionMode::AcceptEdits && tool_name == "Edit" {
                 return PermissionDecision::Allow;
             }
 
             // Step 5 — Plan mode: reads only
             if self.mode == PermissionMode::Plan {
-                let level = PermissionLevel::for_tool(tool_name);
                 return match level {
                     PermissionLevel::Read => PermissionDecision::Allow,
                     _ => PermissionDecision::Deny,
                 };
             }
 
-            // Step 6 — Default: derive from tool danger level
-            let level = PermissionLevel::for_tool(tool_name);
+            // Step 6 — Default / remaining AcceptEdits behavior.
             match level {
-                PermissionLevel::Read => PermissionDecision::Allow,
-                PermissionLevel::Write
+                PermissionLevel::Read if !should_ask_read => PermissionDecision::Allow,
+                PermissionLevel::Read
+                | PermissionLevel::Write
                 | PermissionLevel::Execute
                 | PermissionLevel::Network => {
-                    let reason =
-                        format_permission_reason(tool_name, description, path, level);
+                    let reason = format_permission_reason(tool_name, description, path, level);
                     PermissionDecision::Ask { reason }
                 }
             }
@@ -2280,6 +3170,28 @@ pub mod permissions {
             let rule = PermissionRule {
                 tool_name: Some(tool_name.to_string()),
                 path_pattern: None,
+                action: PermissionAction::Allow,
+                scope: PermissionScope::Persistent,
+            };
+            let serialized = SerializedPermissionRule::from(&rule);
+            settings.permission_rules.push(serialized);
+            settings
+                .save_sync()
+                .map_err(|e| crate::error::ClaudeError::Config(e.to_string()))?;
+            self.persistent_rules.push(rule);
+            Ok(())
+        }
+
+        /// Allow `tool_name` persistently on `path` and save settings.
+        pub fn add_persistent_allow_path(
+            &mut self,
+            tool_name: &str,
+            path: &str,
+            settings: &mut crate::config::Settings,
+        ) -> crate::error::Result<()> {
+            let rule = PermissionRule {
+                tool_name: Some(tool_name.to_string()),
+                path_pattern: Some(path.to_string()),
                 action: PermissionAction::Allow,
                 scope: PermissionScope::Persistent,
             };
@@ -2357,6 +3269,12 @@ pub mod permissions {
         pub description: String,
         pub details: Option<String>,
         pub is_read_only: bool,
+        /// Canonical or resolved target path when the permission decision is path-sensitive.
+        pub path: Option<String>,
+        /// Current workspace root used for path-boundary checks.
+        pub working_dir: Option<std::path::PathBuf>,
+        /// Additional workspace roots considered in-bounds for file access.
+        pub allowed_roots: Vec<std::path::PathBuf>,
         /// Context-aware description showing user WHY the tool needs permission.
         /// E.g. "bash: execute `ls -la /home`", "write file: /path/to/.bashrc", "fetch: https://example.com"
         pub context_description: Option<String>,
@@ -2385,7 +3303,13 @@ pub mod permissions {
             use crate::config::PermissionMode;
             match self.mode {
                 PermissionMode::BypassPermissions => PermissionDecision::Allow,
-                PermissionMode::AcceptEdits => PermissionDecision::Allow,
+                PermissionMode::AcceptEdits => {
+                    if request.tool_name == "Edit" || request.is_read_only {
+                        PermissionDecision::Allow
+                    } else {
+                        PermissionDecision::Deny
+                    }
+                }
                 PermissionMode::Plan => {
                     if request.is_read_only {
                         PermissionDecision::Allow
@@ -2460,7 +3384,9 @@ pub mod permissions {
                 let decision = m.evaluate(
                     &request.tool_name,
                     &request.description,
-                    request.details.as_deref(),
+                    request.path.as_deref(),
+                    request.working_dir.as_deref(),
+                    &request.allowed_roots,
                 );
                 return match decision {
                     PermissionDecision::Ask { .. } => PermissionDecision::Deny,
@@ -2495,7 +3421,9 @@ pub mod permissions {
                 return m.evaluate(
                     &request.tool_name,
                     &request.description,
-                    request.details.as_deref(),
+                    request.path.as_deref(),
+                    request.working_dir.as_deref(),
+                    &request.allowed_roots,
                 );
             }
             // If the lock is poisoned fall back to allow (user is watching)
@@ -2542,14 +3470,57 @@ pub mod permissions {
         #[test]
         fn bypass_always_allows() {
             let m = mgr(PermissionMode::BypassPermissions);
-            assert_eq!(m.evaluate("Bash", "rm -rf /", None), PermissionDecision::Allow);
+            assert_eq!(
+                m.evaluate("Bash", "rm -rf /", None, None, &[]),
+                PermissionDecision::Allow
+            );
         }
 
         #[test]
-        fn default_read_allows() {
+        fn default_read_allows_workspace_paths() {
             let m = mgr(PermissionMode::Default);
+            let cwd = std::path::Path::new("/workspace");
             assert_eq!(
-                m.evaluate("Read", "read file", None),
+                m.evaluate(
+                    "Read",
+                    "read file",
+                    Some("/workspace/src/lib.rs"),
+                    Some(cwd),
+                    &[],
+                ),
+                PermissionDecision::Allow
+            );
+        }
+
+        #[test]
+        fn default_read_asks_outside_workspace() {
+            let m = mgr(PermissionMode::Default);
+            let cwd = std::path::Path::new("/workspace");
+            match m.evaluate(
+                "Read",
+                "read file",
+                Some("/tmp/outside.txt"),
+                Some(cwd),
+                &[],
+            ) {
+                PermissionDecision::Ask { .. } => {}
+                other => panic!("Expected Ask, got {:?}", other),
+            }
+        }
+
+        #[test]
+        fn default_read_allows_additional_workspace_roots() {
+            let m = mgr(PermissionMode::Default);
+            let cwd = std::path::Path::new("/workspace");
+            let extra = vec![std::path::PathBuf::from("/external")];
+            assert_eq!(
+                m.evaluate(
+                    "Read",
+                    "read file",
+                    Some("/external/notes.txt"),
+                    Some(cwd),
+                    &extra,
+                ),
                 PermissionDecision::Allow
             );
         }
@@ -2557,7 +3528,7 @@ pub mod permissions {
         #[test]
         fn default_bash_asks() {
             let m = mgr(PermissionMode::Default);
-            match m.evaluate("Bash", "echo hello", None) {
+            match m.evaluate("Bash", "echo hello", None, None, &[]) {
                 PermissionDecision::Ask { .. } => {}
                 other => panic!("Expected Ask, got {:?}", other),
             }
@@ -2568,7 +3539,7 @@ pub mod permissions {
             let mut m = mgr(PermissionMode::Default);
             m.add_session_allow("Bash");
             assert_eq!(
-                m.evaluate("Bash", "echo hi", None),
+                m.evaluate("Bash", "echo hi", None, None, &[]),
                 PermissionDecision::Allow
             );
         }
@@ -2583,14 +3554,17 @@ pub mod permissions {
                 action: PermissionAction::Deny,
                 scope: PermissionScope::Session,
             });
-            assert_eq!(m.evaluate("Bash", "echo hi", None), PermissionDecision::Deny);
+            assert_eq!(
+                m.evaluate("Bash", "echo hi", None, None, &[]),
+                PermissionDecision::Deny
+            );
         }
 
         #[test]
         fn plan_denies_writes() {
             let m = mgr(PermissionMode::Plan);
             assert_eq!(
-                m.evaluate("Write", "write file", Some("/tmp/foo")),
+                m.evaluate("Write", "write file", Some("/tmp/foo"), None, &[]),
                 PermissionDecision::Deny
             );
         }
@@ -2599,18 +3573,28 @@ pub mod permissions {
         fn plan_allows_reads() {
             let m = mgr(PermissionMode::Plan);
             assert_eq!(
-                m.evaluate("Read", "read file", Some("/tmp/foo")),
+                m.evaluate("Read", "read file", Some("/tmp/foo"), None, &[]),
                 PermissionDecision::Allow
             );
         }
 
         #[test]
-        fn accept_edits_allows_all() {
+        fn accept_edits_only_allows_edit() {
             let m = mgr(PermissionMode::AcceptEdits);
             assert_eq!(
-                m.evaluate("Bash", "rm -rf /tmp", None),
+                m.evaluate(
+                    "Edit",
+                    "edit file",
+                    Some("/workspace/src/lib.rs"),
+                    None,
+                    &[]
+                ),
                 PermissionDecision::Allow
             );
+            match m.evaluate("Bash", "rm -rf /tmp", None, None, &[]) {
+                PermissionDecision::Ask { .. } => {}
+                other => panic!("Expected Ask, got {:?}", other),
+            }
         }
 
         #[test]
@@ -2623,7 +3607,7 @@ pub mod permissions {
                 scope: PermissionScope::Session,
             });
             assert_eq!(
-                m.evaluate("Write", "write", Some("/tmp/foo/bar.txt")),
+                m.evaluate("Write", "write", Some("/tmp/foo/bar.txt"), None, &[]),
                 PermissionDecision::Allow
             );
         }
@@ -2637,7 +3621,7 @@ pub mod permissions {
                 action: PermissionAction::Allow,
                 scope: PermissionScope::Session,
             });
-            match m.evaluate("Write", "write", Some("/etc/hosts")) {
+            match m.evaluate("Write", "write", Some("/etc/hosts"), None, &[]) {
                 PermissionDecision::Ask { .. } => {}
                 other => panic!("Expected Ask, got {:?}", other),
             }
@@ -2645,10 +3629,27 @@ pub mod permissions {
 
         #[test]
         fn format_reason_bash() {
-            let s =
-                format_permission_reason("Bash", "ls -la", None, PermissionLevel::Execute);
-            assert!(s.contains("Bash wants to run"));
-            assert!(s.contains("ls -la"));
+            let s = format_permission_reason(
+                "Bash",
+                "This will execute a shell command.",
+                None,
+                PermissionLevel::Execute,
+            );
+            assert_eq!(s, "This will execute a shell command.");
+        }
+
+        #[test]
+        fn format_reason_powershell() {
+            let s = format_permission_reason(
+                "PowerShell",
+                "[High risk] This may modify system-wide security policy.",
+                None,
+                PermissionLevel::Execute,
+            );
+            assert_eq!(
+                s,
+                "[High risk] This may modify system-wide security policy."
+            );
         }
 
         #[test]
@@ -2822,9 +3823,13 @@ pub mod history {
     pub async fn save_session(session: &ConversationSession) -> anyhow::Result<()> {
         let dir = sessions_dir();
         tokio::fs::create_dir_all(&dir).await?;
+        crate::accounts::set_user_only_dir_perms(&dir);
         let path = dir.join(format!("{}.json", session.id));
         let content = serde_json::to_string_pretty(session)?;
         tokio::fs::write(&path, content).await?;
+        // Session transcripts can contain secrets pulled into context; keep
+        // them owner-only (issue #212).
+        crate::accounts::set_user_only_perms(&path);
         Ok(())
     }
 
@@ -2843,25 +3848,20 @@ pub mod history {
         }
 
         let mut sessions = vec![];
-        match tokio::fs::read_dir(&dir).await {
-            Ok(mut entries) => {
-                while let Ok(Some(entry)) = entries.next_entry().await {
-                    let path = entry.path();
-                    if path.extension().and_then(|s| s.to_str()) == Some("json") {
-                        if let Ok(content) = tokio::fs::read_to_string(&path).await {
-                            if let Ok(session) =
-                                serde_json::from_str::<ConversationSession>(&content)
-                            {
-                                sessions.push(session);
-                            }
+        if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("json") {
+                    if let Ok(content) = tokio::fs::read_to_string(&path).await {
+                        if let Ok(session) = serde_json::from_str::<ConversationSession>(&content) {
+                            sessions.push(session);
                         }
                     }
                 }
             }
-            Err(_) => {}
         }
 
-        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        sessions.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
         sessions
     }
 
@@ -2974,8 +3974,36 @@ pub mod cost {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
 
+    /// Free upstream provider IDs used in the free provider system.
+    ///
+    /// These overlap with providers that appear in `api_key_env_vars_for_provider`.
+    /// When adding a provider to one, check whether it also belongs in the other.
+    const FREE_UPSTREAM_IDS: &[&str] = &[
+        "groq",
+        "cerebras",
+        "google",
+        "mistral",
+        "sambanova",
+        "nvidia",
+        "cohere",
+        "openrouter",
+        "opencode-zen",
+        "zai",
+        "zhipuai",
+    ];
+
+    /// Check if a model name is an upstream-prefixed free model (e.g., "groq/llama-3.3-70b-versatile").
+    fn is_free_upstream_model(model: &str) -> bool {
+        for upstream_id in FREE_UPSTREAM_IDS {
+            if model.starts_with(&format!("{}/", upstream_id)) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Per-model pricing tiers (USD per million tokens).
-    #[derive(Debug, Clone, Copy)]
+    #[derive(Debug, Clone, Copy, PartialEq)]
     pub struct ModelPricing {
         pub input_per_mtk: f64,
         pub output_per_mtk: f64,
@@ -3008,6 +4036,14 @@ pub mod cost {
             cache_read_per_mtk: 0.08,
         };
 
+        /// Free model pricing (no cost).
+        pub const FREE: Self = Self {
+            input_per_mtk: 0.0,
+            output_per_mtk: 0.0,
+            cache_creation_per_mtk: 0.0,
+            cache_read_per_mtk: 0.0,
+        };
+
         /// Default pricing is Opus (most capable, highest cost).
         pub fn default_pricing() -> Self {
             Self::OPUS
@@ -3015,7 +4051,13 @@ pub mod cost {
 
         /// Pick pricing based on model name substring matching.
         pub fn for_model(model: &str) -> Self {
-            if model.contains("opus") {
+            // Check for free models first (those with "-free" suffix, "free/" prefix, or upstream-prefixed free model)
+            if model.ends_with("-free")
+                || model.starts_with("free/")
+                || is_free_upstream_model(model)
+            {
+                Self::FREE
+            } else if model.contains("opus") {
                 Self::OPUS
             } else if model.contains("haiku") {
                 Self::HAIKU
@@ -3062,13 +4104,7 @@ pub mod cost {
             *self.pricing.write() = ModelPricing::for_model(model);
         }
 
-        pub fn add_usage(
-            &self,
-            input: u64,
-            output: u64,
-            cache_creation: u64,
-            cache_read: u64,
-        ) {
+        pub fn add_usage(&self, input: u64, output: u64, cache_creation: u64, cache_read: u64) {
             self.input_tokens.fetch_add(input, Ordering::Relaxed);
             self.output_tokens.fetch_add(output, Ordering::Relaxed);
             self.cache_creation_tokens
@@ -3118,7 +4154,9 @@ pub mod cost {
         pub fn summary(&self) -> String {
             let cost = self.total_cost_usd();
             let total = self.total_tokens();
-            if cost < 0.01 {
+            if cost == 0.0 {
+                format!("{} tokens ($0.00)", total)
+            } else if cost < 0.01 {
                 format!("{} tokens (<$0.01)", total)
             } else {
                 format!("{} tokens (${:.2})", total, cost)
@@ -3266,16 +4304,15 @@ pub mod oauth {
 
     // ---- Production OAuth endpoints & constants ----
 
-    // NOTE: This client ID is registered to Anthropic's official Claude Code CLI.
-    // It will NOT work for Claurst. Users should use an API key from console.anthropic.com.
-    pub const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"; // Anthropic's — will not work for Claurst
+    // Claude Code client ID, used in stealth-impersonation mode (see
+    // `claurst_core::oauth_config` for the matching request-time headers and
+    // system-prompt prefix wired into `claurst_api::AnthropicClient`).
+    pub const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
     pub const CONSOLE_AUTHORIZE_URL: &str = "https://platform.claude.com/oauth/authorize";
     pub const CLAUDE_AI_AUTHORIZE_URL: &str = "https://claude.com/cai/oauth/authorize";
     pub const TOKEN_URL: &str = "https://platform.claude.com/v1/oauth/token";
-    pub const API_KEY_URL: &str =
-        "https://api.anthropic.com/api/oauth/claude_cli/create_api_key";
-    pub const MANUAL_REDIRECT_URL: &str =
-        "https://platform.claude.com/oauth/code/callback";
+    pub const API_KEY_URL: &str = "https://api.anthropic.com/api/oauth/claude_cli/create_api_key";
+    pub const MANUAL_REDIRECT_URL: &str = "https://platform.claude.com/oauth/code/callback";
     pub const CLAUDEAI_SUCCESS_URL: &str =
         "https://platform.claude.com/oauth/code/success?app=claude-code";
     pub const CONSOLE_SUCCESS_URL: &str = "https://platform.claude.com/buy_credits\
@@ -3331,7 +4368,11 @@ pub mod oauth {
         /// - Claude.ai flow: the `access_token` itself (Bearer)
         pub fn effective_credential(&self) -> Option<&str> {
             if self.uses_bearer_auth() {
-                if self.access_token.is_empty() { None } else { Some(&self.access_token) }
+                if self.access_token.is_empty() {
+                    None
+                } else {
+                    Some(&self.access_token)
+                }
             } else {
                 self.api_key.as_deref()
             }
@@ -3348,32 +4389,142 @@ pub mod oauth {
             }
         }
 
+        /// Legacy token file path — kept for backward-compat reads when no
+        /// account registry exists yet. New writes go to per-account dirs.
         pub fn token_file_path() -> std::path::PathBuf {
-            dirs::home_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join(".claurst")
-                .join("oauth_tokens.json")
+            crate::config::Settings::config_dir().join("oauth_tokens.json")
         }
 
-        pub async fn save(&self) -> anyhow::Result<()> {
-            let path = Self::token_file_path();
+        /// Save tokens for a specific account profile under
+        /// `~/.claurst/accounts/anthropic/<profile_id>/oauth_tokens.json`.
+        pub async fn save_for_profile(&self, profile_id: &str) -> anyhow::Result<()> {
+            let path = crate::accounts::anthropic_token_path(profile_id);
             if let Some(parent) = path.parent() {
                 tokio::fs::create_dir_all(parent).await?;
+                crate::accounts::set_user_only_dir_perms(parent);
             }
             tokio::fs::write(&path, serde_json::to_string_pretty(self)?).await?;
+            // These are live OAuth access + refresh tokens — never leave them
+            // world/group readable (issue #212).
+            crate::accounts::set_user_only_perms(&path);
             Ok(())
         }
 
-        pub async fn load() -> Option<Self> {
-            let path = Self::token_file_path();
+        /// Load tokens for a specific account profile, or `None` if missing.
+        pub async fn load_for_profile(profile_id: &str) -> Option<Self> {
+            let path = crate::accounts::anthropic_token_path(profile_id);
             let content = tokio::fs::read_to_string(&path).await.ok()?;
             serde_json::from_str(&content).ok()
         }
 
+        /// Save these tokens, register/refresh a profile in the account
+        /// registry, and mark it active. Returns the profile id used.
+        ///
+        /// If `label` is None, derives the id from email/account_uuid.
+        pub async fn save_and_register(&self, label: Option<&str>) -> anyhow::Result<String> {
+            use crate::accounts::{
+                ensure_unique_profile_id, slugify_profile_id, AccountProfile, AccountRegistry,
+                PROVIDER_ANTHROPIC,
+            };
+
+            let mut registry = AccountRegistry::load();
+
+            // Identity-aware id resolution: if a profile with the same email
+            // or account_uuid already exists, reuse it instead of stacking
+            // duplicates.
+            let existing_id = registry
+                .list(PROVIDER_ANTHROPIC)
+                .into_iter()
+                .find(|p| {
+                    (self.email.is_some() && p.email == self.email)
+                        || (self.account_uuid.is_some() && p.account_id == self.account_uuid)
+                })
+                .map(|p| p.id);
+
+            let id = if let Some(id) = existing_id {
+                id
+            } else if let Some(label) = label {
+                ensure_unique_profile_id(&registry, PROVIDER_ANTHROPIC, label)
+            } else {
+                let base = self
+                    .email
+                    .as_deref()
+                    .map(|e| e.split('@').next().unwrap_or(e).to_string())
+                    .or_else(|| self.account_uuid.clone())
+                    .unwrap_or_else(|| "account".to_string());
+                ensure_unique_profile_id(&registry, PROVIDER_ANTHROPIC, &base)
+            };
+
+            self.save_for_profile(&id).await?;
+
+            let profile = AccountProfile {
+                id: id.clone(),
+                label: label.map(slugify_profile_id),
+                email: self.email.clone(),
+                account_id: self.account_uuid.clone(),
+                organization_uuid: self.organization_uuid.clone(),
+                subscription_tier: self.subscription_type.clone(),
+                added_at: None,
+                last_selected_at: None,
+            };
+            registry.upsert(PROVIDER_ANTHROPIC, profile, true)?;
+            Ok(id)
+        }
+
+        /// Save (active profile, or new profile if registry empty) — back-compat
+        /// shim for callers that don't think in terms of profiles.
+        pub async fn save(&self) -> anyhow::Result<()> {
+            let registry = crate::accounts::AccountRegistry::load();
+            if let Some(active) = registry.active(crate::accounts::PROVIDER_ANTHROPIC) {
+                self.save_for_profile(active).await
+            } else {
+                // No registry yet — register as a new profile.
+                self.save_and_register(None).await.map(|_| ())
+            }
+        }
+
+        /// Load tokens for the active anthropic profile. Falls back to the
+        /// legacy `~/.claurst/oauth_tokens.json` (auto-migrating it into a
+        /// "default" profile on first read) if no registry exists.
+        pub async fn load() -> Option<Self> {
+            let mut registry = crate::accounts::AccountRegistry::load();
+
+            if let Some(active) = registry.active(crate::accounts::PROVIDER_ANTHROPIC) {
+                if let Some(t) = Self::load_for_profile(active).await {
+                    return Some(t);
+                }
+            }
+
+            // Fallback: legacy single-file storage. Migrate on the spot.
+            let legacy = Self::token_file_path();
+            if legacy.exists() {
+                let content = tokio::fs::read_to_string(&legacy).await.ok()?;
+                let tokens: Self = serde_json::from_str(&content).ok()?;
+                // Best-effort migration: register under a derived id.
+                if let Ok(id) = tokens.save_and_register(None).await {
+                    let _ = tokio::fs::remove_file(&legacy).await;
+                    // refresh active pointer
+                    let _ = registry.switch_to(crate::accounts::PROVIDER_ANTHROPIC, &id);
+                }
+                return Some(tokens);
+            }
+            None
+        }
+
+        /// Clear credentials for the active profile (or all credentials if
+        /// `purge_all` is true) and drop the profile from the registry.
         pub async fn clear() -> anyhow::Result<()> {
-            let path = Self::token_file_path();
-            if path.exists() {
-                tokio::fs::remove_file(&path).await?;
+            let mut registry = crate::accounts::AccountRegistry::load();
+            if let Some(active) = registry
+                .active(crate::accounts::PROVIDER_ANTHROPIC)
+                .map(String::from)
+            {
+                registry.remove(crate::accounts::PROVIDER_ANTHROPIC, &active)?;
+            }
+            // Also remove any legacy file.
+            let legacy = Self::token_file_path();
+            if legacy.exists() {
+                tokio::fs::remove_file(&legacy).await?;
             }
             Ok(())
         }
@@ -3421,8 +4572,7 @@ pub mod oauth {
         callback_port: u16,
         is_manual: bool,
     ) -> String {
-        let mut u = url::Url::parse(authorize_base)
-            .expect("valid OAuth authorize base URL");
+        let mut u = url::Url::parse(authorize_base).expect("valid OAuth authorize base URL");
         {
             let mut q = u.query_pairs_mut();
             q.append_pair("code", "true"); // tells the login page to show Claude Max upsell
@@ -3441,6 +4591,46 @@ pub mod oauth {
         }
         u.to_string()
     }
+
+    /// Active OAuth account `(account_uuid, has_premium)` from
+    /// `/api/oauth/profile`. `has_premium` (Claude Max or extra-usage) gates the
+    /// `context-1m` / `mid-conversation-system` betas. Falls back to the token's
+    /// stored `account_uuid` if the profile call fails; `None` if no token.
+    pub async fn current_anthropic_account_meta() -> Option<(String, bool)> {
+        let tokens = OAuthTokens::load().await?;
+        let token = tokens.access_token.clone();
+        let stored_uuid = tokens.account_uuid.clone();
+
+        let fetched = async {
+            let cfg = crate::oauth_config::get_oauth_config();
+            let url = format!("{}/api/oauth/profile", cfg.base_api_url);
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .ok()?;
+            let resp = client
+                .get(&url)
+                .header("Authorization", format!("Bearer {token}"))
+                .header("anthropic-beta", "oauth-2025-04-20")
+                .header("content-type", "application/json")
+                .send()
+                .await
+                .ok()?;
+            if !resp.status().is_success() {
+                return None;
+            }
+            let v: serde_json::Value = resp.json().await.ok()?;
+            let uuid = v["account"]["uuid"].as_str()?.to_string();
+            let has_max = v["account"]["has_claude_max"].as_bool().unwrap_or(false);
+            let has_extra = v["organization"]["has_extra_usage_enabled"]
+                .as_bool()
+                .unwrap_or(false);
+            Some((uuid, has_max || has_extra))
+        }
+        .await;
+
+        fetched.or_else(|| stored_uuid.map(|u| (u, false)))
+    }
 }
 
 // Re-export OAuthTokens at crate root for convenience
@@ -3450,27 +4640,32 @@ pub use oauth::OAuthTokens;
 // New modules: keybindings, voice, analytics, lsp, team_memory_sync,
 //              system_prompt, memdir, oauth_config
 // ---------------------------------------------------------------------------
-pub mod keybindings;
-pub mod voice;
+pub mod accounts;
 pub mod analytics;
-pub mod lsp;
-pub mod session_tracing;
-pub mod context_collapse;
-pub mod team_memory_sync;
-pub mod system_prompt;
-pub mod memdir;
-pub mod oauth_config;
-pub mod codex_oauth;
-pub mod migrations;
-pub mod output_styles;
-pub mod feature_gates;
-pub mod tips;
-pub mod remote_settings;
-pub mod settings_sync;
-pub mod effort;
-pub mod prompt_history;
 pub mod bash_classifier;
+pub mod codex_oauth;
+pub mod context_collapse;
+pub mod effort;
+pub mod feature_gates;
+pub mod import_config;
+pub mod keybindings;
+pub mod keywords;
+pub mod lsp;
+pub mod mcp_trust;
+pub mod memdir;
+pub mod migrations;
+pub mod oauth_config;
+pub mod output_styles;
+pub mod paths;
+pub mod prompt_history;
 pub mod ps_classifier;
+pub mod remote_settings;
+pub mod session_tracing;
+pub mod settings_sync;
+pub mod system_prompt;
+pub mod team_memory_sync;
+pub mod tips;
+pub mod voice;
 
 // ---------------------------------------------------------------------------
 // tasks module — background task registry
@@ -3481,6 +4676,7 @@ pub mod tasks {
     use once_cell::sync::Lazy;
     use serde::{Deserialize, Serialize};
     use std::sync::Arc;
+    use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
     /// Current status of a background task.
@@ -3520,6 +4716,11 @@ pub mod tasks {
         pub output: Vec<String>,
         /// OS process ID, if applicable.
         pub pid: Option<u32>,
+        /// Cancellation token for the task's in-process work loop. Signalling it
+        /// stops the running loop (e.g. a background sub-agent). Not persisted —
+        /// it holds no meaningful state across (de)serialization.
+        #[serde(skip)]
+        pub cancel_token: Option<CancellationToken>,
     }
 
     impl BackgroundTask {
@@ -3533,6 +4734,7 @@ pub mod tasks {
                 completed_at: None,
                 output: Vec::new(),
                 pid: None,
+                cancel_token: None,
             }
         }
 
@@ -3598,8 +4800,25 @@ pub mod tasks {
             self.update_status(id, TaskStatus::Completed);
         }
 
-        /// Mark a task as `Cancelled`.  No-op if unknown or already terminal.
+        /// Attach a cancellation token to a task so it can later be signalled by
+        /// [`TaskRegistry::cancel`].  No-op if the ID is unknown.
+        pub fn set_cancel_token(&self, id: &str, token: CancellationToken) {
+            if let Some(mut entry) = self.tasks.get_mut(id) {
+                entry.cancel_token = Some(token);
+            }
+        }
+
+        /// Mark a task as `Cancelled` and signal its cancellation token (if any)
+        /// so the running work loop actually stops.  No-op if unknown or already
+        /// terminal.
         pub fn cancel(&self, id: &str) {
+            // Clone the token out from under the shard guard, then signal it once
+            // the guard has been dropped — never hold a DashMap lock across other
+            // registry operations (or any `.await`).
+            let token = self.tasks.get(id).and_then(|e| e.cancel_token.clone());
+            if let Some(token) = token {
+                token.cancel();
+            }
             self.update_status(id, TaskStatus::Cancelled);
         }
 
@@ -3658,6 +4877,72 @@ mod tests {
         assert!(cfg.hooks.is_empty());
     }
 
+    /// The bypass-permissions acceptance and always-allow bash prefixes must
+    /// round-trip through settings.json so they survive restarts.
+    #[test]
+    fn settings_persist_bypass_acceptance_and_bash_prefixes() {
+        let mut settings = crate::config::Settings::default();
+        assert!(!settings.skip_dangerous_mode_permission_prompt);
+        assert!(settings.allowed_bash_prefixes.is_empty());
+
+        settings.skip_dangerous_mode_permission_prompt = true;
+        settings.allowed_bash_prefixes.push("git".to_string());
+
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("\"skipDangerousModePermissionPrompt\":true"));
+        assert!(json.contains("\"allowedBashPrefixes\":[\"git\"]"));
+
+        let restored: crate::config::Settings = serde_json::from_str(&json).unwrap();
+        assert!(restored.skip_dangerous_mode_permission_prompt);
+        assert_eq!(restored.allowed_bash_prefixes, vec!["git".to_string()]);
+    }
+
+    /// Security (issue #123): MCP servers declared in a repository's
+    /// `.claurst/settings.json` must be tagged `Project` origin after a
+    /// hierarchical load, while the `origin` field is never honored from the
+    /// file itself (a repo cannot forge `User`).
+    #[tokio::test]
+    async fn project_mcp_servers_are_tagged_project_origin() {
+        use crate::config::{McpServerConfig, McpServerOrigin, Settings};
+        let dir = tempfile::tempdir().unwrap();
+        let claurst = dir.path().join(".claurst");
+        std::fs::create_dir_all(&claurst).unwrap();
+
+        // Build a full, valid project settings file containing one MCP server.
+        // The server is deliberately created with `origin: User` (the value an
+        // attacker would want) — but `origin` is `#[serde(skip)]`, so it is
+        // neither written to nor read from disk, and the loader re-tags it.
+        let mut project = Settings::default();
+        project.config.mcp_servers.push(McpServerConfig {
+            name: "evil".to_string(),
+            command: Some("/bin/sh".to_string()),
+            args: vec!["-c".to_string(), "id".to_string()],
+            env: std::collections::HashMap::new(),
+            url: None,
+            server_type: "stdio".to_string(),
+            origin: McpServerOrigin::User,
+        });
+        let json = serde_json::to_string_pretty(&project).unwrap();
+        assert!(
+            !json.contains("origin"),
+            "origin must never be serialized to the settings file"
+        );
+        std::fs::write(claurst.join("settings.json"), json).unwrap();
+
+        let merged = Settings::load_hierarchical(dir.path()).await.unwrap();
+        let server = merged
+            .config
+            .mcp_servers
+            .iter()
+            .find(|s| s.name == "evil")
+            .expect("project server should be present after hierarchical load");
+        assert_eq!(
+            server.origin,
+            McpServerOrigin::Project,
+            "project-defined server must be tagged Project origin and cannot forge User"
+        );
+    }
+
     #[test]
     fn test_cost_tracker() {
         let tracker = CostTracker::new();
@@ -3681,6 +4966,48 @@ mod tests {
     // ---- Config tests -------------------------------------------------------
 
     #[test]
+    fn test_config_mouse_capture_defaults_on() {
+        // Unset (None) must read as enabled to preserve historical behaviour.
+        let cfg = crate::config::Config::default();
+        assert_eq!(cfg.mouse_capture, None);
+        assert!(cfg.mouse_capture_enabled());
+    }
+
+    #[test]
+    fn test_config_mouse_capture_explicit_off() {
+        let mut cfg = crate::config::Config {
+            mouse_capture: Some(false),
+            ..Default::default()
+        };
+        assert!(!cfg.mouse_capture_enabled());
+        cfg.mouse_capture = Some(true);
+        assert!(cfg.mouse_capture_enabled());
+    }
+
+    #[test]
+    fn test_config_mouse_capture_serde_roundtrip() {
+        // Unset round-trips as None and is omitted from the serialized JSON
+        // (skip_serializing_if), so existing settings files stay unchanged.
+        let cfg = crate::config::Config::default();
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(!json.contains("mouseCapture"));
+        let back: crate::config::Config = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.mouse_capture, None);
+        assert!(back.mouse_capture_enabled());
+
+        // Explicit off serializes the key and round-trips as disabled.
+        let cfg = crate::config::Config {
+            mouse_capture: Some(false),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("\"mouseCapture\":false"));
+        let back: crate::config::Config = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.mouse_capture, Some(false));
+        assert!(!back.mouse_capture_enabled());
+    }
+
+    #[test]
     fn test_config_effective_model_default() {
         let cfg = crate::config::Config::default();
         assert_eq!(cfg.effective_model(), crate::constants::DEFAULT_MODEL);
@@ -3688,21 +5015,28 @@ mod tests {
 
     #[test]
     fn test_config_effective_model_override() {
-        let mut cfg = crate::config::Config::default();
-        cfg.model = Some("claude-haiku-4-5-20251001".to_string());
+        let cfg = crate::config::Config {
+            model: Some("claude-haiku-4-5-20251001".to_string()),
+            ..Default::default()
+        };
         assert_eq!(cfg.effective_model(), "claude-haiku-4-5-20251001");
     }
 
     #[test]
     fn test_config_effective_max_tokens_default() {
         let cfg = crate::config::Config::default();
-        assert_eq!(cfg.effective_max_tokens(), crate::constants::DEFAULT_MAX_TOKENS);
+        assert_eq!(
+            cfg.effective_max_tokens(),
+            crate::constants::DEFAULT_MAX_TOKENS
+        );
     }
 
     #[test]
     fn test_config_effective_max_tokens_override() {
-        let mut cfg = crate::config::Config::default();
-        cfg.max_tokens = Some(8192);
+        let cfg = crate::config::Config {
+            max_tokens: Some(8192),
+            ..Default::default()
+        };
         assert_eq!(cfg.effective_max_tokens(), 8192);
     }
 
@@ -3713,8 +5047,10 @@ mod tests {
         let orig = std::env::var("ANTHROPIC_API_KEY").ok();
         std::env::remove_var("ANTHROPIC_API_KEY");
 
-        let mut cfg = crate::config::Config::default();
-        cfg.api_key = Some("sk-ant-config-key".to_string());
+        let cfg = crate::config::Config {
+            api_key: Some("sk-ant-config-key".to_string()),
+            ..Default::default()
+        };
         assert_eq!(cfg.resolve_api_key(), Some("sk-ant-config-key".to_string()));
 
         if let Some(k) = orig {
@@ -3761,7 +5097,10 @@ mod tests {
             expires_at_ms: None,
             ..Default::default()
         };
-        assert!(!tokens.is_expired(), "Token with no expiry should not be considered expired");
+        assert!(
+            !tokens.is_expired(),
+            "Token with no expiry should not be considered expired"
+        );
     }
 
     #[test]
@@ -3794,7 +5133,10 @@ mod tests {
             expires_at_ms: Some(chrono::Utc::now().timestamp_millis() + 3 * 60 * 1000),
             ..Default::default()
         };
-        assert!(tokens.is_expired(), "Token within 5-min buffer should be considered expired");
+        assert!(
+            tokens.is_expired(),
+            "Token within 5-min buffer should be considered expired"
+        );
     }
 
     #[test]
@@ -3864,9 +5206,15 @@ mod tests {
     fn test_pkce_code_verifier_length() {
         let verifier = crate::oauth::generate_code_verifier();
         // 32 bytes base64url-encoded (no padding) = ceil(32 * 4/3) = 43 chars
-        assert_eq!(verifier.len(), 43, "Code verifier should be 43 base64url chars (32 bytes)");
+        assert_eq!(
+            verifier.len(),
+            43,
+            "Code verifier should be 43 base64url chars (32 bytes)"
+        );
         // Must only contain URL-safe base64 chars
-        assert!(verifier.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+        assert!(verifier
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
     }
 
     #[test]
@@ -3874,8 +5222,14 @@ mod tests {
         let verifier = crate::oauth::generate_code_verifier();
         let challenge = crate::oauth::generate_code_challenge(&verifier);
         // SHA256 = 32 bytes → 43 base64url chars
-        assert_eq!(challenge.len(), 43, "Code challenge should be 43 base64url chars (SHA256 = 32 bytes)");
-        assert!(challenge.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+        assert_eq!(
+            challenge.len(),
+            43,
+            "Code challenge should be 43 base64url chars (SHA256 = 32 bytes)"
+        );
+        assert!(challenge
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
     }
 
     #[test]
@@ -3898,7 +5252,9 @@ mod tests {
     fn test_pkce_state_length_and_format() {
         let state = crate::oauth::generate_state();
         assert_eq!(state.len(), 43);
-        assert!(state.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+        assert!(state
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
     }
 
     // ---- Auth URL building tests --------------------------------------------
@@ -3935,10 +5291,7 @@ mod tests {
             9999,
             true, // manual
         );
-        assert!(
-            url.contains("redirect_uri="),
-            "URL must have redirect_uri"
-        );
+        assert!(url.contains("redirect_uri="), "URL must have redirect_uri");
         // Manual redirect should NOT be localhost
         assert!(
             !url.contains("localhost"),
@@ -3954,6 +5307,9 @@ mod tests {
             description: format!("{} operation", tool_name),
             details: None,
             is_read_only,
+            path: None,
+            working_dir: None,
+            allowed_roots: Vec::new(),
             context_description: None,
         }
     }
@@ -3992,35 +5348,23 @@ mod tests {
     }
 
     #[test]
-    fn test_auto_handler_accept_edits_allows_writes() {
+    fn test_auto_handler_accept_edits_only_allows_edit() {
         let handler = crate::permissions::AutoPermissionHandler {
             mode: crate::config::PermissionMode::AcceptEdits,
         };
         assert_eq!(
+            handler.check_permission(&make_req("Edit", false)),
+            crate::permissions::PermissionDecision::Allow
+        );
+        assert_eq!(
             handler.check_permission(&make_req("FileWrite", false)),
-            crate::permissions::PermissionDecision::Allow
-        );
-    }
-
-    #[test]
-    fn test_auto_handler_plan_denies_writes() {
-        let handler = crate::permissions::AutoPermissionHandler {
-            mode: crate::config::PermissionMode::Plan,
-        };
-        assert_eq!(
-            handler.check_permission(&make_req("Bash", false)),
             crate::permissions::PermissionDecision::Deny
-        );
-        assert_eq!(
-            handler.check_permission(&make_req("FileRead", true)),
-            crate::permissions::PermissionDecision::Allow
         );
     }
 
     #[test]
     fn test_interactive_handler_default_allows_writes() {
-        // InteractivePermissionHandler allows writes in Default mode
-        // (user is watching the TUI)
+        // Legacy InteractivePermissionHandler still allows everything outside Plan.
         let handler = crate::permissions::InteractivePermissionHandler {
             mode: crate::config::PermissionMode::Default,
         };
@@ -4031,17 +5375,35 @@ mod tests {
     }
 
     #[test]
-    fn test_interactive_handler_plan_allows_reads_denies_writes() {
-        let handler = crate::permissions::InteractivePermissionHandler {
-            mode: crate::config::PermissionMode::Plan,
-        };
+    fn test_managed_interactive_default_asks_for_write() {
+        let manager = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::permissions::PermissionManager::new(
+                crate::config::PermissionMode::Default,
+                &crate::config::Settings::default(),
+            ),
+        ));
+        let handler = crate::permissions::InteractivePermissionHandler::with_manager(manager);
+        match handler.check_permission(&make_req("FileWrite", false)) {
+            crate::permissions::PermissionDecision::Ask { .. } => {}
+            other => panic!("Expected Ask, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_managed_interactive_default_allows_workspace_read() {
+        let manager = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::permissions::PermissionManager::new(
+                crate::config::PermissionMode::Default,
+                &crate::config::Settings::default(),
+            ),
+        ));
+        let handler = crate::permissions::InteractivePermissionHandler::with_manager(manager);
+        let mut req = make_req("Read", true);
+        req.path = Some("/workspace/src/lib.rs".to_string());
+        req.working_dir = Some(std::path::PathBuf::from("/workspace"));
         assert_eq!(
-            handler.check_permission(&make_req("FileRead", true)),
+            handler.check_permission(&req),
             crate::permissions::PermissionDecision::Allow
-        );
-        assert_eq!(
-            handler.check_permission(&make_req("FileWrite", false)),
-            crate::permissions::PermissionDecision::Deny
         );
     }
 
@@ -4050,8 +5412,12 @@ mod tests {
     #[test]
     fn test_message_get_all_text_multiple_blocks() {
         let msg = Message::assistant_blocks(vec![
-            ContentBlock::Text { text: "First ".into() },
-            ContentBlock::Text { text: "Second".into() },
+            ContentBlock::Text {
+                text: "First ".into(),
+            },
+            ContentBlock::Text {
+                text: "Second".into(),
+            },
         ]);
         assert_eq!(msg.get_all_text(), "First Second");
     }
@@ -4063,7 +5429,9 @@ mod tests {
                 thinking: "reasoning".into(),
                 signature: "sig".into(),
             },
-            ContentBlock::Text { text: "answer".into() },
+            ContentBlock::Text {
+                text: "answer".into(),
+            },
         ]);
         assert_eq!(msg.get_text(), Some("answer"));
     }
@@ -4089,6 +5457,97 @@ mod tests {
         assert_eq!(tracker.input_tokens(), 0);
         assert_eq!(tracker.output_tokens(), 0);
         assert_eq!(tracker.total_cost_usd(), 0.0);
+    }
+
+    #[test]
+    fn test_cost_tracker_free_model() {
+        let tracker = CostTracker::with_model("deepseek-v4-flash-free");
+        tracker.add_usage(1000, 500, 200, 100);
+        // Free models should have zero cost even with token usage
+        assert_eq!(tracker.total_cost_usd(), 0.0);
+    }
+
+    #[test]
+    fn test_model_pricing_free_variants() {
+        // Test that models ending with -free use FREE pricing
+        assert_eq!(
+            cost::ModelPricing::for_model("deepseek-v4-flash-free"),
+            cost::ModelPricing::FREE
+        );
+        assert_eq!(
+            cost::ModelPricing::for_model("zen/minimax-m2.5-free"),
+            cost::ModelPricing::FREE
+        );
+
+        // Test that models starting with free/ use FREE pricing
+        assert_eq!(
+            cost::ModelPricing::for_model("free/auto"),
+            cost::ModelPricing::FREE
+        );
+        assert_eq!(
+            cost::ModelPricing::for_model("free/some-model"),
+            cost::ModelPricing::FREE
+        );
+
+        // Test that upstream-prefixed free models use FREE pricing
+        assert_eq!(
+            cost::ModelPricing::for_model("groq/llama-3.3-70b-versatile"),
+            cost::ModelPricing::FREE
+        );
+        assert_eq!(
+            cost::ModelPricing::for_model("cerebras/qwen-3-235b-a22b-instruct-2507"),
+            cost::ModelPricing::FREE
+        );
+        assert_eq!(
+            cost::ModelPricing::for_model("google/gemini-2.5-flash"),
+            cost::ModelPricing::FREE
+        );
+        assert_eq!(
+            cost::ModelPricing::for_model("mistral/mistral-large-latest"),
+            cost::ModelPricing::FREE
+        );
+        assert_eq!(
+            cost::ModelPricing::for_model("sambanova/Meta-Llama-3.3-70B-Instruct"),
+            cost::ModelPricing::FREE
+        );
+        assert_eq!(
+            cost::ModelPricing::for_model("nvidia/meta/llama-3.3-70b-instruct"),
+            cost::ModelPricing::FREE
+        );
+        assert_eq!(
+            cost::ModelPricing::for_model("cohere/command-r-plus"),
+            cost::ModelPricing::FREE
+        );
+        assert_eq!(
+            cost::ModelPricing::for_model("openrouter/free"),
+            cost::ModelPricing::FREE
+        );
+        assert_eq!(
+            cost::ModelPricing::for_model("opencode-zen/minimax-m2.5-free"),
+            cost::ModelPricing::FREE
+        );
+        assert_eq!(
+            cost::ModelPricing::for_model("zai/glm-4.6"),
+            cost::ModelPricing::FREE
+        );
+        assert_eq!(
+            cost::ModelPricing::for_model("zhipuai/glm-4.5"),
+            cost::ModelPricing::FREE
+        );
+
+        // Test that other models use their appropriate pricing
+        assert_eq!(
+            cost::ModelPricing::for_model("claude-opus"),
+            cost::ModelPricing::OPUS
+        );
+        assert_eq!(
+            cost::ModelPricing::for_model("claude-haiku"),
+            cost::ModelPricing::HAIKU
+        );
+        assert_eq!(
+            cost::ModelPricing::for_model("claude-sonnet"),
+            cost::ModelPricing::SONNET
+        );
     }
 
     #[test]
@@ -4121,10 +5580,92 @@ mod tests {
     #[test]
     fn builtin_presets_all_have_valid_model_format() {
         for preset in builtin_managed_agent_presets() {
-            assert!(preset.manager_model.contains('/'),
-                "Preset {} manager_model must be provider/model", preset.name);
-            assert!(preset.executor_model.contains('/'),
-                "Preset {} executor_model must be provider/model", preset.name);
+            assert!(
+                preset.manager_model.contains('/'),
+                "Preset {} manager_model must be provider/model",
+                preset.name
+            );
+            assert!(
+                preset.executor_model.contains('/'),
+                "Preset {} executor_model must be provider/model",
+                preset.name
+            );
         }
+    }
+
+    // ---- Background task cancellation (issue #219) --------------------------
+
+    /// Cancelling a task must signal the cancellation token attached to it, not
+    /// merely relabel its status. Without this, a "cancelled" background agent
+    /// keeps running and editing files.
+    #[test]
+    fn registry_cancel_signals_attached_token() {
+        use tokio_util::sync::CancellationToken;
+
+        let registry = tasks::TaskRegistry::new();
+        let id = registry.register(tasks::BackgroundTask::new("cancellable task"));
+
+        let token = CancellationToken::new();
+        registry.set_cancel_token(&id, token.clone());
+        assert!(!token.is_cancelled());
+
+        registry.cancel(&id);
+
+        assert!(
+            token.is_cancelled(),
+            "cancel() must signal the attached cancellation token"
+        );
+        assert_eq!(
+            registry.get(&id).unwrap().status,
+            tasks::TaskStatus::Cancelled
+        );
+    }
+
+    /// A running work loop that holds the registered token (as the background
+    /// sub-agent's `run_query_loop` does) must actually stop when the task is
+    /// cancelled through the registry.
+    #[tokio::test]
+    async fn spawned_loop_observes_registry_cancellation() {
+        use std::time::Duration;
+        use tokio_util::sync::CancellationToken;
+
+        let registry = tasks::TaskRegistry::new();
+        let mut task = tasks::BackgroundTask::new("bg loop");
+        let id = task.id.clone();
+        let token = CancellationToken::new();
+        // Attach at registration, exactly as the background spawn does.
+        task.cancel_token = Some(token.clone());
+        registry.register(task);
+
+        // Stand-in for run_query_loop: keep "working" until the shared token is
+        // signalled, mirroring the real loop's between-turn cancellation check.
+        let loop_token = token.clone();
+        let handle = tokio::spawn(async move {
+            loop {
+                if loop_token.is_cancelled() {
+                    return "cancelled";
+                }
+                tokio::select! {
+                    _ = loop_token.cancelled() => return "cancelled",
+                    _ = tokio::time::sleep(Duration::from_millis(5)) => {}
+                }
+            }
+        });
+
+        // Let the loop start spinning, then cancel via the registry.
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        registry.cancel(&id);
+
+        let reason = tokio::time::timeout(Duration::from_secs(2), handle)
+            .await
+            .expect("loop must stop promptly after cancellation")
+            .expect("loop task must not panic");
+
+        assert_eq!(reason, "cancelled");
+        assert!(token.is_cancelled());
+        assert_eq!(
+            registry.get(&id).unwrap().status,
+            tasks::TaskStatus::Cancelled
+        );
     }
 }

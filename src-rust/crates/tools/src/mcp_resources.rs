@@ -25,7 +25,14 @@ struct ListMcpResourcesInput {
 
 #[async_trait]
 impl Tool for ListMcpResourcesTool {
-    fn name(&self) -> &str { "ListMcpResources" }
+    // Gates itself: calls `ctx.check_permission` in `execute()` (#210).
+    fn self_gates(&self) -> bool {
+        true
+    }
+
+    fn name(&self) -> &str {
+        "ListMcpResources"
+    }
 
     fn description(&self) -> &str {
         "List all resources available from connected MCP servers. \
@@ -33,7 +40,9 @@ impl Tool for ListMcpResourcesTool {
          Resources represent data that MCP servers expose (files, database records, etc.)."
     }
 
-    fn permission_level(&self) -> PermissionLevel { PermissionLevel::ReadOnly }
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::ReadOnly
+    }
 
     fn input_schema(&self) -> Value {
         json!({
@@ -52,6 +61,21 @@ impl Tool for ListMcpResourcesTool {
             Ok(p) => p,
             Err(e) => return ToolResult::error(format!("Invalid input: {}", e)),
         };
+
+        if let Err(e) = ctx.check_permission(
+            self.name(),
+            &format!(
+                "List MCP resources{}",
+                params
+                    .server
+                    .as_deref()
+                    .map(|s| format!(" for {}", s))
+                    .unwrap_or_default()
+            ),
+            true,
+        ) {
+            return ToolResult::error(e.to_string());
+        }
 
         let manager = match &ctx.mcp_manager {
             Some(m) => m,
@@ -91,14 +115,23 @@ struct ReadMcpResourceInput {
 
 #[async_trait]
 impl Tool for ReadMcpResourceTool {
-    fn name(&self) -> &str { "ReadMcpResource" }
+    // Gates itself: calls `ctx.check_permission` in `execute()` (#210).
+    fn self_gates(&self) -> bool {
+        true
+    }
+
+    fn name(&self) -> &str {
+        "ReadMcpResource"
+    }
 
     fn description(&self) -> &str {
         "Read a specific resource from an MCP server by URI. \
          Use ListMcpResources to discover available resource URIs."
     }
 
-    fn permission_level(&self) -> PermissionLevel { PermissionLevel::ReadOnly }
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::ReadOnly
+    }
 
     fn input_schema(&self) -> Value {
         json!({
@@ -122,6 +155,14 @@ impl Tool for ReadMcpResourceTool {
             Ok(p) => p,
             Err(e) => return ToolResult::error(format!("Invalid input: {}", e)),
         };
+
+        if let Err(e) = ctx.check_permission(
+            self.name(),
+            &format!("Read MCP resource {}:{}", params.server, params.uri),
+            true,
+        ) {
+            return ToolResult::error(e.to_string());
+        }
 
         let manager = match &ctx.mcp_manager {
             Some(m) => m,

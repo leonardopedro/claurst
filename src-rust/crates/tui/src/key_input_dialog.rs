@@ -25,6 +25,12 @@ pub struct KeyInputDialogState {
     pub cursor_pos: usize,
 }
 
+impl Default for KeyInputDialogState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl KeyInputDialogState {
     pub fn new() -> Self {
         Self {
@@ -86,11 +92,7 @@ impl KeyInputDialogState {
 
 /// Render the key input dialog overlay — OpenCode-style: dark overlay, no
 /// border, minimal and polished.
-pub fn render_key_input_dialog(
-    frame: &mut Frame,
-    state: &KeyInputDialogState,
-    area: Rect,
-) {
+pub fn render_key_input_dialog(frame: &mut Frame, state: &KeyInputDialogState, area: Rect) {
     if !state.visible {
         return;
     }
@@ -151,11 +153,7 @@ pub fn render_key_input_dialog(
         if len <= 4 {
             state.input.clone()
         } else {
-            format!(
-                "{}{}",
-                "\u{2022}".repeat(len - 4),
-                &state.input[len - 4..]
-            )
+            format!("{}{}", "\u{2022}".repeat(len - 4), &state.input[len - 4..])
         }
     };
 

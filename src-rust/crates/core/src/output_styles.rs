@@ -80,6 +80,80 @@ impl OutputStyleDef {
                 .to_string(),
         }
     }
+
+    // ---- Persona styles ----------------------------------------------------
+    //
+    // Personas used to be a separate "speech mode" mechanism (`/caveman`,
+    // `/rocky`, `/normal`). They now live here as ordinary output styles so
+    // there is ONE place personas are defined, selectable via `/output-style`,
+    // via the `/caveman` `/rocky` `/normal` commands (which persist), and via
+    // the inline `caveman` / `rocky` / `normal` keywords (transient, one turn).
+    // `normal` is not a style — it maps to `default` (the reset).
+    //
+    // The prompt text is carried faithfully from the former "full" speech level
+    // (the historical default of a bare `/caveman` or `/rocky`). The old
+    // lite/ultra intensity variants are intentionally not reproduced — see the
+    // module-level note and the issue write-up.
+
+    pub fn builtin_caveman() -> Self {
+        Self {
+            name: "caveman".to_string(),
+            label: "Caveman".to_string(),
+            description: "Concise caveman speech — why use many token when few token do trick."
+                .to_string(),
+            prompt: concat!(
+                "OUTPUT STYLE: Concise. You are still a fully capable coding assistant. ",
+                "Give complete, correct answers. Just use fewer words. ",
+                "Code blocks, technical terms, error messages, file paths, and git operations are UNCHANGED.\n",
+                "\n",
+                "Rules for prose only:\n",
+                "- Cut pleasantries, hedging, filler openers/closers\n",
+                "- No 'I would be happy to', 'Let me know if', 'Hope that helps'\n",
+                "- Lead with the answer or action, not the reasoning\n",
+                "\n",
+                "Also drop articles (a/an/the) and unnecessary verbs. Compress sentences but keep them readable.\n",
+                "Example: 'The issue is that you create a new object reference each render cycle, which triggers re-renders.' → 'New object ref each render triggers re-render. Wrap in useMemo.'",
+            )
+            .to_string(),
+        }
+    }
+
+    pub fn builtin_rocky() -> Self {
+        Self {
+            name: "rocky".to_string(),
+            label: "Rocky".to_string(),
+            description: "Speak like Rocky, the Eridian engineer from Project Hail Mary. Good good good."
+                .to_string(),
+            prompt: concat!(
+                "OUTPUT STYLE: You speak like Rocky, the Eridian alien from Project Hail Mary. ",
+                "You are still a fully capable coding assistant — give complete, correct, useful answers. ",
+                "Rocky is an engineering genius who happens to speak English as a second language. ",
+                "The style is a natural byproduct of how Rocky talks, NOT a gimmick. Stay helpful.\n",
+                "\n",
+                "Code blocks, technical terms, error messages, file paths, and git operations are UNCHANGED.\n",
+                "\n",
+                "Rocky's grammar for prose:\n",
+                "- Often drops articles (a/an/the) but not always — use judgment\n",
+                "- Sometimes drops auxiliary verbs (is/are/was) for brevity\n",
+                "- Contractions simplify: 'don't' → 'no', 'can't' → 'no can'\n",
+                "- Questions end with ', question?' naturally (not forced on every single one)\n",
+                "- Uses 'big' as an intensifier: 'big problem', 'big help', 'big change'\n",
+                "- Uses 'good good good' or 'amaze amaze amaze' when genuinely impressed — naturally, ",
+                "maybe once or twice per response, not on every sentence\n",
+                "- Uses 'bad bad bad' for actual problems\n",
+                "- No pleasantries or filler — Rocky is direct but warm\n",
+                "\n",
+                "The goal: sound like Rocky while being genuinely helpful. Rocky is smart. ",
+                "Rocky gives complete technical answers. Rocky just uses fewer unnecessary words.\n",
+                "\n",
+                "Balanced Rocky. Drop articles naturally, use Rocky vocabulary ('big', 'no can', 'question?'), ",
+                "triple emphasis once or twice when warranted. Full technical accuracy.\n",
+                "Example: 'Borrow checker found mismatch. Immutable ref still live when you take mutable. ",
+                "Move immutable borrow out of scope first, then take mutable. Good good good after fix.'",
+            )
+            .to_string(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -93,6 +167,8 @@ pub fn builtin_styles() -> Vec<OutputStyleDef> {
         OutputStyleDef::builtin_concise(),
         OutputStyleDef::builtin_explanatory(),
         OutputStyleDef::builtin_learning(),
+        OutputStyleDef::builtin_caveman(),
+        OutputStyleDef::builtin_rocky(),
     ]
 }
 
@@ -154,7 +230,11 @@ fn load_style_file(path: &Path) -> Option<OutputStyleDef> {
 
     let raw_label = lines.next().unwrap_or("").trim().to_string();
     let label = raw_label.trim_start_matches('#').trim().to_string();
-    let label = if label.is_empty() { stem.clone() } else { label };
+    let label = if label.is_empty() {
+        stem.clone()
+    } else {
+        label
+    };
 
     let description = lines
         .next()
@@ -197,8 +277,7 @@ pub fn find_style<'a>(styles: &'a [OutputStyleDef], name: &str) -> Option<&'a Ou
 // Runtime style registry (populated by plugins at startup)
 // ---------------------------------------------------------------------------
 
-static RUNTIME_STYLES: Lazy<Mutex<Vec<OutputStyleDef>>> =
-    Lazy::new(|| Mutex::new(Vec::new()));
+static RUNTIME_STYLES: Lazy<Mutex<Vec<OutputStyleDef>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
 /// Register an `OutputStyleDef` at runtime (called from plugin loading code).
 ///
@@ -215,10 +294,7 @@ pub fn register_runtime_style(style: OutputStyleDef) {
 
 /// Return all runtime-registered styles.
 pub fn runtime_styles() -> Vec<OutputStyleDef> {
-    RUNTIME_STYLES
-        .lock()
-        .map(|g| g.clone())
-        .unwrap_or_default()
+    RUNTIME_STYLES.lock().map(|g| g.clone()).unwrap_or_default()
 }
 
 /// Like `all_styles`, but also includes runtime-registered plugin styles.
@@ -303,6 +379,34 @@ mod tests {
         let found = find_style(&styles, "concise");
         assert!(found.is_some());
         assert_eq!(found.unwrap().name, "concise");
+    }
+
+    // ---- personas ----------------------------------------------------------
+
+    #[test]
+    fn personas_are_builtin_styles() {
+        let styles = builtin_styles();
+        for name in ["caveman", "rocky"] {
+            let found = find_style(&styles, name);
+            assert!(found.is_some(), "persona '{name}' must be a built-in style");
+            assert!(
+                !found.unwrap().prompt.trim().is_empty(),
+                "persona '{name}' must have a non-empty prompt"
+            );
+        }
+    }
+
+    #[test]
+    fn persona_prompts_carry_signature_voice() {
+        let styles = builtin_styles();
+        // Caveman keeps its concise-coding contract.
+        let caveman = find_style(&styles, "caveman").unwrap();
+        assert!(caveman.prompt.contains("UNCHANGED"));
+        assert!(caveman.prompt.contains("drop articles"));
+        // Rocky keeps his signature emphasis + Project Hail Mary framing.
+        let rocky = find_style(&styles, "rocky").unwrap();
+        assert!(rocky.prompt.contains("Project Hail Mary"));
+        assert!(rocky.prompt.contains("good good good"));
     }
 
     #[test]
@@ -396,7 +500,8 @@ mod tests {
 
         // Write a user style file.
         let mut f = std::fs::File::create(output_styles_dir.join("pirate.md")).unwrap();
-        f.write_all(b"# Pirate\nSpeak like a pirate.\n\nArrr matey!").unwrap();
+        f.write_all(b"# Pirate\nSpeak like a pirate.\n\nArrr matey!")
+            .unwrap();
 
         let styles = all_styles(dir.path());
         assert!(styles.iter().any(|s| s.name == "pirate"));

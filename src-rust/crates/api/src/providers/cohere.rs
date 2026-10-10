@@ -10,13 +10,13 @@ use std::pin::Pin;
 
 use async_stream::stream;
 use async_trait::async_trait;
-use claurst_core::provider_id::{ModelId, ProviderId};
+use claurst_core::provider_id::ProviderId;
 use claurst_core::types::{ContentBlock, UsageInfo};
 use futures::Stream;
 use serde_json::{json, Value};
 use tracing::debug;
 
-use crate::provider::{LlmProvider, ModelInfo};
+use crate::provider::LlmProvider;
 use crate::provider_error::ProviderError;
 use crate::provider_types::{
     ProviderCapabilities, ProviderRequest, ProviderResponse, ProviderStatus, StopReason,
@@ -42,7 +42,7 @@ impl CohereProvider {
     /// Create a new CohereProvider with the given API key.
     pub fn new(api_key: String) -> Self {
         let http_client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(600))
+            .timeout(crate::request_timeout())
             .build()
             .expect("failed to build reqwest client");
 
@@ -70,10 +70,7 @@ impl CohereProvider {
     /// Cohere v2 uses the same shape as OpenAI Chat Completions, so we reuse
     /// the OpenAI transformation helper.
     fn build_messages(&self, request: &ProviderRequest) -> Vec<Value> {
-        OpenAiProvider::to_openai_messages_pub(
-            &request.messages,
-            request.system_prompt.as_ref(),
-        )
+        OpenAiProvider::to_openai_messages_pub(&request.messages, request.system_prompt.as_ref())
     }
 
     /// Build the Cohere v2 tools array.  Same shape as OpenAI function tools.
@@ -86,7 +83,11 @@ impl CohereProvider {
         // Cohere error format: {"message": "..."}
         let message = serde_json::from_str::<Value>(body)
             .ok()
-            .and_then(|v| v.get("message").and_then(|m| m.as_str()).map(|s| s.to_string()))
+            .and_then(|v| {
+                v.get("message")
+                    .and_then(|m| m.as_str())
+                    .map(|s| s.to_string())
+            })
             .unwrap_or_else(|| body.to_string());
 
         match status {
@@ -207,7 +208,9 @@ impl CohereProvider {
                 for item in content_arr {
                     if item.get("type").and_then(|t| t.as_str()) == Some("text") {
                         if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
-                            content_blocks.push(ContentBlock::Text { text: text.to_string() });
+                            content_blocks.push(ContentBlock::Text {
+                                text: text.to_string(),
+                            });
                         }
                     }
                 }
@@ -216,7 +219,11 @@ impl CohereProvider {
             // Tool calls
             if let Some(tool_calls) = message.get("tool_calls").and_then(|t| t.as_array()) {
                 for tc in tool_calls {
-                    let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let id = tc
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let name = tc
                         .get("function")
                         .and_then(|f| f.get("name"))
@@ -230,13 +237,20 @@ impl CohereProvider {
                         .unwrap_or("{}");
                     let input: Value =
                         serde_json::from_str(input_str).unwrap_or_else(|_| json!({}));
-                    content_blocks.push(ContentBlock::ToolUse { id, name, input });
+                    content_blocks.push(ContentBlock::ToolUse {
+                        id,
+                        name,
+                        input,
+                        thought_signature: None,
+                    });
                 }
             }
         }
 
         if content_blocks.is_empty() {
-            content_blocks.push(ContentBlock::Text { text: String::new() });
+            content_blocks.push(ContentBlock::Text {
+                text: String::new(),
+            });
         }
 
         Ok(ProviderResponse {
@@ -316,9 +330,7 @@ fn map_finish_reason(reason: &str) -> StopReason {
         "MAX_TOKENS" => StopReason::MaxTokens,
         "STOP_SEQUENCE" => StopReason::StopSequence,
         "TOOL_CALL" => StopReason::ToolUse,
-        "ERROR" | "ERROR_TOXIC" | "USER_CANCEL" => {
-            StopReason::Other(reason.to_string())
-        }
+        "ERROR" | "ERROR_TOXIC" | "USER_CANCEL" => StopReason::Other(reason.to_string()),
         other => StopReason::Other(other.to_string()),
     }
 }
@@ -386,11 +398,16 @@ impl LlmProvider for CohereProvider {
         let provider_id = self.id.clone();
         let model_name = request.model.clone();
 
+        // TODO(#228): Cohere streams newline-delimited Cohere-shaped JSON (not the
+        // OpenAI `data:` SSE format), so it wants its own `protocol` decoder rather
+        // than `OpenAiChatDecoder`.
         let s = stream! {
             use futures::StreamExt;
 
             let mut byte_stream = resp.bytes_stream();
-            let mut leftover = String::new();
+            // Shared byte-buffering decoder (#228): complete lines only, so a
+            // multibyte codepoint straddling a chunk boundary is never corrupted.
+            let mut decoder = crate::SseByteDecoder::new();
 
             let mut message_started = false;
             let mut tool_call_buffers: std::collections::HashMap<
@@ -412,21 +429,7 @@ impl LlmProvider for CohereProvider {
                     }
                 };
 
-                let text = String::from_utf8_lossy(&chunk);
-                let combined = if leftover.is_empty() {
-                    text.to_string()
-                } else {
-                    let mut s = std::mem::take(&mut leftover);
-                    s.push_str(&text);
-                    s
-                };
-
-                let mut lines: Vec<&str> = combined.split('\n').collect();
-                if !combined.ends_with('\n') {
-                    leftover = lines.pop().unwrap_or("").to_string();
-                }
-
-                for line in lines {
+                for line in decoder.push(&chunk) {
                     let line = line.trim_end_matches('\r').trim();
                     if line.is_empty() {
                         continue;
@@ -563,6 +566,7 @@ impl LlmProvider for CohereProvider {
                                         id: tc_id,
                                         name: tc_name,
                                         input: json!({}),
+                                        thought_signature: None,
                                     },
                                 });
                             }
@@ -651,25 +655,6 @@ impl LlmProvider for CohereProvider {
         };
 
         Ok(Box::pin(s))
-    }
-
-    async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
-        Ok(vec![
-            ModelInfo {
-                id: ModelId::new("command-r-plus"),
-                provider_id: self.id.clone(),
-                name: "Command R+".to_string(),
-                context_window: 128_000,
-                max_output_tokens: 4_000,
-            },
-            ModelInfo {
-                id: ModelId::new("command-r"),
-                provider_id: self.id.clone(),
-                name: "Command R".to_string(),
-                context_window: 128_000,
-                max_output_tokens: 4_000,
-            },
-        ])
     }
 
     async fn health_check(&self) -> Result<ProviderStatus, ProviderError> {

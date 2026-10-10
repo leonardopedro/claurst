@@ -7,8 +7,6 @@ use crate::{PermissionLevel, Tool, ToolContext, ToolResult};
 
 pub struct PlaywrightTool;
 
-
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PlaywrightInput {
     pub action: String,
@@ -128,37 +126,45 @@ impl PlaywrightTool {
 
     fn get_browser_map() -> &'static dashmap::DashMap<String, BrowserState> {
         use once_cell::sync::Lazy;
-        static BROWSER_MAP: Lazy<dashmap::DashMap<String, BrowserState>> = 
+        static BROWSER_MAP: Lazy<dashmap::DashMap<String, BrowserState>> =
             Lazy::new(|| dashmap::DashMap::new());
         &BROWSER_MAP
     }
 
     async fn launch(&self) -> ToolResult {
         use playwright_rs::Playwright;
-        
+
         debug!("Launching Playwright");
         let play = match Playwright::launch().await {
             Ok(p) => p,
             Err(e) => return ToolResult::error(format!("Launch failed: {}", e)),
         };
-        
+
         let browser = match play.chromium().launch().await {
             Ok(b) => b,
             Err(e) => return ToolResult::error(format!("Browser launch failed: {}", e)),
         };
-        
+
         let context = match browser.new_context().await {
             Ok(c) => c,
             Err(e) => return ToolResult::error(format!("Context failed: {}", e)),
         };
-        
+
         let id = format!("br_{}", uuid::Uuid::new_v4());
-        Self::get_browser_map().insert(id.clone(), BrowserState {
-            _browser: Some(browser),
-            context: Some(context),
-            page: None,
-        });
-        
+        Self::get_browser_map().insert(
+            id.clone(),
+            BrowserState {
+                // The Playwright handle owns the node driver process; its Drop
+                // impl SIGKILLs the driver. It MUST outlive every Browser /
+                // BrowserContext / Page issued from it, or all subsequent
+                // protocol calls hang forever waiting on a dead connection.
+                _playwright: Some(play),
+                _browser: Some(browser),
+                context: Some(context),
+                page: None,
+            },
+        );
+
         ToolResult::success(format!(r#"{{"context_id":"{}"}}"#, id))
     }
 
@@ -168,21 +174,21 @@ impl PlaywrightTool {
             Some(s) => s,
             None => return ToolResult::error("Context not found".to_string()),
         };
-        
+
         let context = match state.context.as_ref() {
             Some(c) => c,
             None => return ToolResult::error("Context None".to_string()),
         };
-        
+
         let page = match context.new_page().await {
             Ok(p) => p,
             Err(e) => return ToolResult::error(format!("Page failed: {}", e)),
         };
-        
+
         if let Err(e) = page.goto(url, None).await {
             return ToolResult::error(format!("Navigate failed: {}", e));
         }
-        
+
         state.page = Some(page);
         ToolResult::success(format!(r#"{{"navigated":"{}"}}"#, url))
     }
@@ -193,17 +199,17 @@ impl PlaywrightTool {
             Some(s) => s,
             None => return ToolResult::error("Context not found".to_string()),
         };
-        
+
         let page = match state.page.as_ref() {
             Some(p) => p,
             None => return ToolResult::error("No page".to_string()),
         };
-        
+
         let locator = page.locator(selector).await;
         if let Err(e) = locator.click(None).await {
             return ToolResult::error(format!("Click failed: {}", e));
         }
-        
+
         ToolResult::success(format!(r#"{{"clicked":"{}"}}"#, selector))
     }
 
@@ -213,17 +219,17 @@ impl PlaywrightTool {
             Some(s) => s,
             None => return ToolResult::error("Context not found".to_string()),
         };
-        
+
         let page = match state.page.as_ref() {
             Some(p) => p,
             None => return ToolResult::error("No page".to_string()),
         };
-        
+
         let locator = page.locator(selector).await;
         if let Err(e) = locator.fill(text, None).await {
             return ToolResult::error(format!("Fill failed: {}", e));
         }
-        
+
         ToolResult::success(format!(r#"{{"filled":"{}"}}"#, selector))
     }
 
@@ -233,18 +239,18 @@ impl PlaywrightTool {
             Some(s) => s,
             None => return ToolResult::error("Context not found".to_string()),
         };
-        
+
         let page = match state.page.as_ref() {
             Some(p) => p,
             None => return ToolResult::error("No page".to_string()),
         };
-        
+
         let locator = page.locator(selector).await;
         let text_opt = match locator.text_content().await {
             Ok(t) => t,
             Err(e) => return ToolResult::error(format!("Text failed: {}", e)),
         };
-        
+
         let text = text_opt.unwrap_or_default();
         ToolResult::success(format!(r#"{{"text":"{}"}}"#, text))
     }
@@ -255,17 +261,17 @@ impl PlaywrightTool {
             Some(s) => s,
             None => return ToolResult::error("Context not found".to_string()),
         };
-        
+
         let page = match state.page.as_ref() {
             Some(p) => p,
             None => return ToolResult::error("No page".to_string()),
         };
-        
+
         let bytes = match page.screenshot(None).await {
             Ok(b) => b,
             Err(e) => return ToolResult::error(format!("Screenshot failed: {}", e)),
         };
-        
+
         use base64::Engine;
         let base64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
         ToolResult::success(format!(r#"{{"screenshot":"{}"}}"#, base64))
@@ -278,6 +284,7 @@ impl PlaywrightTool {
 }
 
 struct BrowserState {
+    _playwright: Option<playwright_rs::Playwright>,
     _browser: Option<playwright_rs::Browser>,
     context: Option<playwright_rs::BrowserContext>,
     page: Option<playwright_rs::Page>,
@@ -287,10 +294,10 @@ struct BrowserState {
 mod tests {
     use super::*;
     use claurst_core::config::Config;
-    use std::sync::Arc;
     use claurst_core::permissions::AutoPermissionHandler;
     use std::path::PathBuf;
     use std::sync::atomic::AtomicUsize;
+    use std::sync::Arc;
 
     fn create_test_context() -> ToolContext {
         let handler = AutoPermissionHandler {
@@ -311,6 +318,10 @@ mod tests {
             config: Config::default(),
             managed_agent_config: None,
             completion_notifier: None,
+            pending_permissions: None,
+            permission_manager: None,
+            user_question_tx: None,
+            cancel_token: tokio_util::sync::CancellationToken::new(),
             password_store: None,
         }
     }
@@ -326,15 +337,19 @@ mod tests {
     async fn test_playwright_launch_and_close() {
         let tool = PlaywrightTool::new();
         let ctx = create_test_context();
-        
+
         let input = serde_json::json!({"action": "launch"});
         let result = tool.execute(input, &ctx).await;
-        
-        assert!(!result.is_error, "Launch should succeed: {}", result.content);
-        
+
+        assert!(
+            !result.is_error,
+            "Launch should succeed: {}",
+            result.content
+        );
+
         let json_val: serde_json::Value = serde_json::from_str(&result.content).unwrap();
         let context_id = json_val["context_id"].as_str().unwrap();
-        
+
         // Close
         let close_input = serde_json::json!({"action": "close", "context_id": context_id});
         let close_result = tool.execute(close_input, &ctx).await;
@@ -345,46 +360,64 @@ mod tests {
     async fn test_playwright_full_flow() {
         let tool = PlaywrightTool::new();
         let ctx = create_test_context();
-        
+
         // Launch
-        let launch_json = tool.execute(serde_json::json!({"action": "launch"}), &ctx).await;
+        let launch_json = tool
+            .execute(serde_json::json!({"action": "launch"}), &ctx)
+            .await;
         assert!(!launch_json.is_error);
-        
-        let context_id = serde_json::from_str::<serde_json::Value>(&launch_json.content)
-            .unwrap()["context_id"].as_str().unwrap().to_string();
-        
+
+        let context_id = serde_json::from_str::<serde_json::Value>(&launch_json.content).unwrap()
+            ["context_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
         // Navigate to example.com
         let nav_json = tool.execute(
             serde_json::json!({"action": "navigate", "context_id": &context_id, "url": "https://example.com"}),
             &ctx
         ).await;
         assert!(!nav_json.is_error, "Navigate failed: {}", nav_json.content);
-        
-        // Get h1 text
-        let text_json = tool.execute(
-            serde_json::json!({"action": "text", "context_id": &context_id, "selector": "h1"}),
-            &ctx
-        ).await;
+
+        // Get text (example.com has no <h1>; it serves six localized <p>s,
+        // so pick the unique English one to satisfy strict mode)
+        let text_json = tool
+            .execute(
+                serde_json::json!({"action": "text", "context_id": &context_id, "selector": "p[lang=\"en\"]"}),
+                &ctx,
+            )
+            .await;
         assert!(!text_json.is_error, "Text failed: {}", text_json.content);
-        
+
         // Verify we got something
         let text_val: serde_json::Value = serde_json::from_str(&text_json.content).unwrap();
         let text = text_val["text"].as_str().unwrap();
         assert!(!text.is_empty(), "Should have text content");
-        
+
         // Take screenshot
-        let shot_json = tool.execute(
-            serde_json::json!({"action": "screenshot", "context_id": &context_id}),
-            &ctx
-        ).await;
-        assert!(!shot_json.is_error, "Screenshot failed: {}", shot_json.content);
-        
+        let shot_json = tool
+            .execute(
+                serde_json::json!({"action": "screenshot", "context_id": &context_id}),
+                &ctx,
+            )
+            .await;
+        assert!(
+            !shot_json.is_error,
+            "Screenshot failed: {}",
+            shot_json.content
+        );
+
         // Verify screenshot is base64
         let shot_val: serde_json::Value = serde_json::from_str(&shot_json.content).unwrap();
         let base64 = shot_val["screenshot"].as_str().unwrap();
         assert!(!base64.is_empty(), "Screenshot should have base64 data");
-        
+
         // Close
-        tool.execute(serde_json::json!({"action": "close", "context_id": &context_id}), &ctx).await;
+        tool.execute(
+            serde_json::json!({"action": "close", "context_id": &context_id}),
+            &ctx,
+        )
+        .await;
     }
 }

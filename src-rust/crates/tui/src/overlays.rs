@@ -159,7 +159,9 @@ pub fn modal_title_line(title: &str, right_hint: &str) -> Line<'static> {
     Line::from(vec![
         Span::styled(
             format!(" {}", title),
-            Style::default().fg(CLAURST_TEXT).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(CLAURST_TEXT)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             format!("  {}", right_hint),
@@ -180,15 +182,22 @@ pub fn render_modal_title_frame(frame: &mut Frame, area: Rect, title: &str, righ
     let line = Line::from(vec![
         Span::styled(
             format!(" {}", title),
-            Style::default().fg(CLAURST_TEXT).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(CLAURST_TEXT)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(" ".repeat(padding), Style::default().fg(CLAURST_TEXT)),
-        Span::styled(
-            right_hint.to_string(),
-            Style::default().fg(CLAURST_MUTED),
-        ),
+        Span::styled(right_hint.to_string(), Style::default().fg(CLAURST_MUTED)),
     ]);
-    frame.render_widget(Paragraph::new(line), Rect { x: area.x, y: area.y, width: area.width, height: 1 });
+    frame.render_widget(
+        Paragraph::new(line),
+        Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: 1,
+        },
+    );
 }
 
 pub fn render_modal_title_buf(buf: &mut Buffer, area: Rect, title: &str, right_hint: &str) {
@@ -203,13 +212,12 @@ pub fn render_modal_title_buf(buf: &mut Buffer, area: Rect, title: &str, right_h
     let line = Line::from(vec![
         Span::styled(
             format!(" {}", title),
-            Style::default().fg(CLAURST_TEXT).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(CLAURST_TEXT)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(" ".repeat(padding), Style::default().fg(CLAURST_TEXT)),
-        Span::styled(
-            right_hint.to_string(),
-            Style::default().fg(CLAURST_MUTED),
-        ),
+        Span::styled(right_hint.to_string(), Style::default().fg(CLAURST_MUTED)),
     ]);
     Paragraph::new(line).render(
         Rect {
@@ -297,9 +305,8 @@ impl HelpOverlay {
     pub fn populate_from_commands(&mut self, entries: Vec<HelpEntry>) {
         self.commands = entries;
         // Sort stable by category, then name for consistent display.
-        self.commands.sort_by(|a, b| {
-            a.category.cmp(&b.category).then(a.name.cmp(&b.name))
-        });
+        self.commands
+            .sort_by(|a, b| a.category.cmp(&b.category).then(a.name.cmp(&b.name)));
     }
 
     pub fn toggle(&mut self) {
@@ -340,9 +347,9 @@ impl HelpOverlay {
 
 /// Render the help overlay into the frame.
 pub fn render_help_overlay(frame: &mut Frame, overlay: &HelpOverlay, area: Rect) {
+    use claurst_core::constants::APP_VERSION;
     use ratatui::layout::{Constraint, Direction, Layout};
     use ratatui::widgets::Wrap;
-    use claurst_core::constants::APP_VERSION;
 
     if !overlay.visible {
         return;
@@ -367,7 +374,11 @@ pub fn render_help_overlay(frame: &mut Frame, overlay: &HelpOverlay, area: Rect)
 
     let col_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(42), Constraint::Length(1), Constraint::Min(1)])
+        .constraints([
+            Constraint::Percentage(42),
+            Constraint::Length(1),
+            Constraint::Min(1),
+        ])
         .split(content_area);
 
     // ─── Left column: keyboard shortcuts by category ───────────────────────
@@ -375,19 +386,23 @@ pub fn render_help_overlay(frame: &mut Frame, overlay: &HelpOverlay, area: Rect)
 
     left_lines.push(Line::from(Span::styled(
         " Keyboard Shortcuts",
-        Style::default().fg(CLAURST_ACCENT).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(CLAURST_ACCENT)
+            .add_modifier(Modifier::BOLD),
     )));
     left_lines.push(Line::from(""));
 
     // Navigation category
     left_lines.push(Line::from(Span::styled(
         " Navigation",
-        Style::default().fg(CLAURST_ACCENT).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(CLAURST_ACCENT)
+            .add_modifier(Modifier::BOLD),
     )));
     for (key, desc) in &[
-        ("PageUp / PgDn",   "Scroll messages"),
-        ("j / k",           "Scroll one line"),
-        ("Home / End",      "Top / bottom"),
+        ("PageUp / PgDn", "Scroll messages"),
+        ("j / k", "Scroll one line"),
+        ("Home / End", "Top / bottom"),
     ] {
         left_lines.push(kb_line(key, desc));
     }
@@ -396,13 +411,16 @@ pub fn render_help_overlay(frame: &mut Frame, overlay: &HelpOverlay, area: Rect)
     // Input category
     left_lines.push(Line::from(Span::styled(
         " Input",
-        Style::default().fg(CLAURST_ACCENT).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(CLAURST_ACCENT)
+            .add_modifier(Modifier::BOLD),
     )));
     for (key, desc) in &[
-        ("Enter",           "Submit message"),
-        ("Up / Down",       "Input history"),
-        ("Ctrl+R",          "Search history"),
-        ("Esc",             "Cancel / close"),
+        ("Enter", "Submit message"),
+        ("Up / Down", "Input history"),
+        ("Ctrl+R", "Search history"),
+        ("Alt+E", "Expand pasted text"),
+        ("Esc", "Cancel / close"),
     ] {
         left_lines.push(kb_line(key, desc));
     }
@@ -411,15 +429,18 @@ pub fn render_help_overlay(frame: &mut Frame, overlay: &HelpOverlay, area: Rect)
     // App category
     left_lines.push(Line::from(Span::styled(
         " App",
-        Style::default().fg(CLAURST_ACCENT).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(CLAURST_ACCENT)
+            .add_modifier(Modifier::BOLD),
     )));
     for (key, desc) in &[
-        ("F1 / ?",          "Toggle help"),
-        ("Ctrl+A",          "Model picker"),
-        ("Ctrl+K",          "Command palette"),
-        ("Ctrl+C",          "Cancel / quit"),
-        ("Ctrl+D",          "Quit (empty input)"),
-        ("Ctrl+L",          "Clear screen"),
+        ("F1 / ?", "Toggle help"),
+        ("Ctrl+Shift+A", "Model picker"),
+        ("Ctrl+K", "Command palette"),
+        ("Ctrl+C", "Cancel / quit"),
+        ("Ctrl+D", "Quit (empty input)"),
+        ("Ctrl+L", "Clear screen"),
+        ("t", "Expand/collapse thinking"),
     ] {
         left_lines.push(kb_line(key, desc));
     }
@@ -454,7 +475,9 @@ pub fn render_help_overlay(frame: &mut Frame, overlay: &HelpOverlay, area: Rect)
 
     right_lines.push(Line::from(Span::styled(
         " Slash Commands",
-        Style::default().fg(CLAURST_ACCENT).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(CLAURST_ACCENT)
+            .add_modifier(Modifier::BOLD),
     )));
     right_lines.push(Line::from(""));
 
@@ -467,7 +490,9 @@ pub fn render_help_overlay(frame: &mut Frame, overlay: &HelpOverlay, area: Rect)
             }
             right_lines.push(Line::from(Span::styled(
                 format!(" {}", entry.category),
-                Style::default().fg(CLAURST_ACCENT).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(CLAURST_ACCENT)
+                    .add_modifier(Modifier::BOLD),
             )));
         }
         let aliases_text = if entry.aliases.is_empty() {
@@ -479,11 +504,16 @@ pub fn render_help_overlay(frame: &mut Frame, overlay: &HelpOverlay, area: Rect)
             Span::raw("  "),
             Span::styled(
                 format!("/{:<14}", entry.name),
-                Style::default().fg(CLAURST_TEXT).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(CLAURST_TEXT)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled(aliases_text, Style::default().fg(CLAURST_MUTED)),
             Span::raw("  "),
-            Span::styled(entry.description.clone(), Style::default().fg(CLAURST_MUTED)),
+            Span::styled(
+                entry.description.clone(),
+                Style::default().fg(CLAURST_MUTED),
+            ),
         ]));
     }
 
@@ -507,17 +537,15 @@ pub fn render_help_overlay(frame: &mut Frame, overlay: &HelpOverlay, area: Rect)
         col_chunks[2],
     );
 
-    let version_line = Line::from(vec![
-        Span::styled(
-            format!(
-                " v{}  ·  type to filter  ·  ↑↓ scroll commands  ·  esc close",
-                APP_VERSION
-            ),
-            Style::default()
-                .fg(CLAURST_MUTED)
-                .add_modifier(Modifier::ITALIC),
+    let version_line = Line::from(vec![Span::styled(
+        format!(
+            " v{}  ·  type to filter  ·  ↑↓ scroll commands  ·  esc close",
+            APP_VERSION
         ),
-    ]);
+        Style::default()
+            .fg(CLAURST_MUTED)
+            .add_modifier(Modifier::ITALIC),
+    )]);
     frame.render_widget(Paragraph::new(version_line), layout.footer_area);
 }
 
@@ -552,12 +580,20 @@ pub struct HistoryEntry {
 impl HistoryEntry {
     /// Create a new entry stamped with the current time.
     pub fn new(text: String) -> Self {
-        Self { text, timestamp: Some(current_unix_secs()), pinned: false }
+        Self {
+            text,
+            timestamp: Some(current_unix_secs()),
+            pinned: false,
+        }
     }
 
     /// Create a legacy entry without a timestamp.
     pub fn legacy(text: String) -> Self {
-        Self { text, timestamp: None, pinned: false }
+        Self {
+            text,
+            timestamp: None,
+            pinned: false,
+        }
     }
 
     /// Human-readable relative time: "just now", "2m ago", "3h ago", "2d ago", etc.
@@ -585,10 +621,7 @@ impl HistoryEntry {
 // ---------------------------------------------------------------------------
 
 fn pins_path() -> std::path::PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join(".claurst")
-        .join("history_pins.json")
+    claurst_core::config::Settings::config_dir().join("history_pins.json")
 }
 
 /// Load the set of pinned entry texts from `~/.claurst/history_pins.json`.
@@ -599,8 +632,7 @@ pub fn load_pinned_texts() -> std::collections::HashSet<String> {
         Ok(c) => c,
         Err(_) => return std::collections::HashSet::new(),
     };
-    serde_json::from_str::<std::collections::HashSet<String>>(&content)
-        .unwrap_or_default()
+    serde_json::from_str::<std::collections::HashSet<String>>(&content).unwrap_or_default()
 }
 
 /// Persist `pinned_texts` to `~/.claurst/history_pins.json`.
@@ -797,9 +829,13 @@ impl HistorySearchOverlay {
     /// Persists the updated pin set to `~/.claurst/history_pins.json` and
     /// recomputes the match list so the entry moves to/from the pinned section.
     pub fn toggle_pin(&mut self) {
-        let Some(m) = self.matches.get(self.selected_idx) else { return };
+        let Some(m) = self.matches.get(self.selected_idx) else {
+            return;
+        };
         let snap_idx = m.snapshot_idx;
-        let Some(entry) = self.snapshot.get_mut(snap_idx) else { return };
+        let Some(entry) = self.snapshot.get_mut(snap_idx) else {
+            return;
+        };
         entry.pinned = !entry.pinned;
 
         // Rebuild the persisted pin set from the full snapshot.
@@ -845,12 +881,15 @@ impl HistorySearchOverlay {
         // Sort: pinned entries always first, then by score descending.
         // Stable sort preserves insertion order for ties within each group.
         scored.sort_by(|a, b| {
-            let a_pinned = self.snapshot.get(a.snapshot_idx).map_or(false, |e| e.pinned);
-            let b_pinned = self.snapshot.get(b.snapshot_idx).map_or(false, |e| e.pinned);
+            let a_pinned = self.snapshot.get(a.snapshot_idx).is_some_and(|e| e.pinned);
+            let b_pinned = self.snapshot.get(b.snapshot_idx).is_some_and(|e| e.pinned);
             match (b_pinned, a_pinned) {
                 (true, false) => std::cmp::Ordering::Greater,
                 (false, true) => std::cmp::Ordering::Less,
-                _ => b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal),
+                _ => b
+                    .score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal),
             }
         });
 
@@ -964,7 +1003,9 @@ pub fn render_history_search_overlay(
         Span::raw("  Search: "),
         Span::styled(
             overlay.query.clone(),
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled("\u{2588}", Style::default().fg(Color::White)),
         Span::raw("  "),
@@ -994,26 +1035,25 @@ pub fn render_history_search_overlay(
             let is_selected = real_i == overlay.selected_idx;
 
             // Resolve snapshot entry (for text, timestamp, pinned state).
-            let snap_entry: Option<&HistoryEntry> =
-                overlay.snapshot.get(match_entry.snapshot_idx);
+            let snap_entry: Option<&HistoryEntry> = overlay.snapshot.get(match_entry.snapshot_idx);
 
             // Resolve entry text: prefer snapshot, fall back to passed-in history.
             let entry_text: &str = snap_entry
                 .map(|e| e.text.as_str())
-                .or_else(|| {
-                    history
-                        .get(match_entry.snapshot_idx)
-                        .map(String::as_str)
-                })
+                .or_else(|| history.get(match_entry.snapshot_idx).map(String::as_str))
                 .unwrap_or("");
 
-            let is_pinned = snap_entry.map_or(false, |e| e.pinned);
+            let is_pinned = snap_entry.is_some_and(|e| e.pinned);
 
             // Relative timestamp (right-aligned suffix)
             let time_suffix: String = snap_entry
                 .map(|e| {
                     let t = e.relative_time();
-                    if t.is_empty() { t } else { format!(" · {}", t) }
+                    if t.is_empty() {
+                        t
+                    } else {
+                        format!(" · {}", t)
+                    }
                 })
                 .unwrap_or_default();
 
@@ -1022,8 +1062,8 @@ pub fn render_history_search_overlay(
             let pin_prefix_width: usize = if is_pinned { 2 } else { 0 };
             let prefix_width: usize = 4 + pin_prefix_width; // "    " or "  ► " + optional "★ "
             let time_width = UnicodeWidthStr::width(time_suffix.as_str());
-            let max_text_chars = (dialog_width as usize)
-                .saturating_sub(prefix_width + time_width + 2);
+            let max_text_chars =
+                (dialog_width as usize).saturating_sub(prefix_width + time_width + 2);
 
             let (prefix, base_style) = if is_selected {
                 (
@@ -1050,7 +1090,7 @@ pub fn render_history_search_overlay(
             // Pin star badge (shown for all pinned entries)
             if is_pinned {
                 row_spans.push(Span::styled(
-                    "\u{2605} ",  // ★
+                    "\u{2605} ", // ★
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
@@ -1102,16 +1142,14 @@ fn build_highlighted_spans<'a>(
     let chars: Vec<(usize, char)> = text.char_indices().collect();
 
     // Convert highlight byte-positions to a set of byte offsets for O(1) lookup
-    let hl_set: std::collections::HashSet<usize> =
-        highlight_positions.iter().copied().collect();
+    let hl_set: std::collections::HashSet<usize> = highlight_positions.iter().copied().collect();
 
     let mut spans: Vec<Span<'a>> = Vec::new();
     let mut current_text = String::new();
     let mut current_highlighted = false;
-    let mut char_count = 0usize;
     let mut truncated = false;
 
-    for (byte_off, ch) in &chars {
+    for (char_count, (byte_off, ch)) in chars.iter().enumerate() {
         if char_count >= max_chars {
             truncated = true;
             break;
@@ -1130,7 +1168,6 @@ fn build_highlighted_spans<'a>(
         }
         current_highlighted = is_hl;
         current_text.push(*ch);
-        char_count += 1;
     }
     if !current_text.is_empty() {
         let style = if current_highlighted {
@@ -1143,7 +1180,10 @@ fn build_highlighted_spans<'a>(
         spans.push(Span::styled(current_text, style));
     }
     if truncated {
-        spans.push(Span::styled("…".to_string(), Style::default().fg(Color::DarkGray)));
+        spans.push(Span::styled(
+            "…".to_string(),
+            Style::default().fg(Color::DarkGray),
+        ));
     }
     spans
 }
@@ -1231,6 +1271,80 @@ impl MessageSelectorOverlay {
     }
 }
 
+/// Truncate `s` to at most `max_width` display columns, cutting on char
+/// boundaries and appending an ellipsis when truncated.
+///
+/// Byte-slicing here panics when a multibyte char straddles the cut, and a raw
+/// `usize` width subtraction underflow-panics on narrow terminals (#221).
+fn truncate_to_width(s: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(s) <= max_width {
+        return s.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    if max_width == 1 {
+        return "\u{2026}".to_string();
+    }
+    let mut out = String::new();
+    let mut width = 0usize;
+    for ch in s.chars() {
+        let cw = UnicodeWidthStr::width(ch.encode_utf8(&mut [0u8; 4]));
+        // Reserve one column for the trailing ellipsis.
+        if width + cw > max_width - 1 {
+            break;
+        }
+        out.push(ch);
+        width += cw;
+    }
+    out.push('\u{2026}');
+    out
+}
+
+/// Find the first case-insensitive occurrence of `needle_lc` (already
+/// lowercased) inside `haystack`, returning the byte range **in the original**
+/// `haystack`.
+///
+/// Never indexes one string with another string's byte offsets, so it is safe
+/// for lossy / length-changing lowercase mappings such as `İ` (U+0130 → "i̇"),
+/// `K` (U+212A → "k"), and `ẞ`/`ß` (#221). Both returned offsets are guaranteed
+/// char boundaries of `haystack`.
+fn case_insensitive_find(haystack: &str, needle_lc: &str) -> Option<(usize, usize)> {
+    if needle_lc.is_empty() {
+        return None;
+    }
+    for (start, _) in haystack.char_indices() {
+        let mut hay_chars = haystack[start..].chars();
+        let need_chars = needle_lc.chars();
+        // Lowercase expansion of one haystack char may yield several chars.
+        let mut pending: std::collections::VecDeque<char> = std::collections::VecDeque::new();
+        let mut end = start;
+        let mut matched = true;
+        'need: for nc in need_chars {
+            while pending.is_empty() {
+                match hay_chars.next() {
+                    Some(hc) => {
+                        end += hc.len_utf8();
+                        pending.extend(hc.to_lowercase());
+                    }
+                    None => {
+                        matched = false;
+                        break 'need;
+                    }
+                }
+            }
+            if pending.pop_front() != Some(nc) {
+                matched = false;
+                break 'need;
+            }
+        }
+        if matched {
+            return Some((start, end));
+        }
+    }
+    None
+}
+
 /// Render the message selector overlay.
 pub fn render_message_selector(frame: &mut Frame, overlay: &MessageSelectorOverlay, area: Rect) {
     if !overlay.visible {
@@ -1249,7 +1363,9 @@ pub fn render_message_selector(frame: &mut Frame, overlay: &MessageSelectorOverl
 
     lines.push(Line::from(vec![Span::styled(
         "  Select a message to rewind to:",
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
     )]));
     lines.push(Line::from(""));
 
@@ -1274,12 +1390,10 @@ pub fn render_message_selector(frame: &mut Frame, overlay: &MessageSelectorOverl
 
             let tool_tag = if msg.has_tool_use { " [tool]" } else { "" };
 
-            let preview_max = dialog_width as usize - 20;
-            let preview = if UnicodeWidthStr::width(msg.preview.as_str()) > preview_max {
-                format!("{}…", &msg.preview[..preview_max.saturating_sub(1)])
-            } else {
-                msg.preview.clone()
-            };
+            // saturating_sub avoids an underflow panic on narrow terminals, and
+            // truncate_to_width cuts on char boundaries by display width (#221).
+            let preview_max = (dialog_width as usize).saturating_sub(20);
+            let preview = truncate_to_width(&msg.preview, preview_max);
 
             let prefix = if is_selected { "  \u{25BA} " } else { "    " };
             let idx_style = if is_selected {
@@ -1295,11 +1409,13 @@ pub fn render_message_selector(frame: &mut Frame, overlay: &MessageSelectorOverl
                 Span::styled(format!("{:>3}. ", msg.idx), idx_style),
                 Span::styled(
                     format!("{:<10}", msg.role),
-                    Style::default().fg(role_color).add_modifier(if is_selected {
-                        Modifier::BOLD
-                    } else {
-                        Modifier::empty()
-                    }),
+                    Style::default()
+                        .fg(role_color)
+                        .add_modifier(if is_selected {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
                 ),
                 Span::styled(
                     preview,
@@ -1309,10 +1425,7 @@ pub fn render_message_selector(frame: &mut Frame, overlay: &MessageSelectorOverl
                         Style::default().fg(Color::DarkGray)
                     },
                 ),
-                Span::styled(
-                    tool_tag.to_string(),
-                    Style::default().fg(Color::Yellow),
-                ),
+                Span::styled(tool_tag.to_string(), Style::default().fg(Color::Yellow)),
             ]));
         }
     }
@@ -1453,7 +1566,9 @@ fn render_rewind_confirm(frame: &mut Frame, message_idx: usize, area: Rect) {
         Line::from(vec![
             Span::styled(
                 "  [y] ",
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::raw("Yes, rewind"),
             Span::raw("    "),
@@ -1499,7 +1614,7 @@ fn kb_line<'a>(key: &str, desc: &str) -> Line<'a> {
 /// State for the global ripgrep search dialog.
 #[derive(Debug, Clone, Default)]
 pub struct GlobalSearchState {
-    pub open: bool,
+    pub visible: bool,
     pub query: String,
     pub results: Vec<SearchResult>,
     pub selected: usize,
@@ -1520,13 +1635,15 @@ pub struct SearchResult {
 
 impl GlobalSearchState {
     pub fn open(&mut self) {
-        self.open = true;
+        self.visible = true;
         self.query.clear();
         self.results.clear();
         self.selected = 0;
     }
 
-    pub fn close(&mut self) { self.open = false; }
+    pub fn close(&mut self) {
+        self.visible = false;
+    }
 
     pub fn select_prev(&mut self) {
         let count = self.results.len();
@@ -1568,8 +1685,10 @@ impl GlobalSearchState {
         let output = std::process::Command::new("rg")
             .args([
                 "--json",
-                "--max-count", "10",
-                "--max-filesize", "1M",
+                "--max-count",
+                "10",
+                "--max-filesize",
+                "1M",
                 &self.query,
                 ".",
             ])
@@ -1583,25 +1702,28 @@ impl GlobalSearchState {
         if let Ok(out) = output {
             for line in String::from_utf8_lossy(&out.stdout).lines() {
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
-                    match val["type"].as_str() {
-                        Some("match") => {
-                            let data = &val["data"];
-                            let file = data["path"]["text"].as_str().unwrap_or("").to_string();
-                            let line_no = data["line_number"].as_u64().unwrap_or(0) as u32;
-                            let text = data["lines"]["text"].as_str().unwrap_or("").trim_end_matches('\n').to_string();
-                            let col = data["submatches"][0]["start"].as_u64().unwrap_or(0) as u32;
-                            self.results.push(SearchResult {
-                                file,
-                                line: line_no,
-                                col,
-                                text,
-                                context_before: Vec::new(),
-                                context_after: Vec::new(),
-                            });
-                            self.total_matches += 1;
-                            if self.results.len() >= 500 { break; }
+                    if let Some("match") = val["type"].as_str() {
+                        let data = &val["data"];
+                        let file = data["path"]["text"].as_str().unwrap_or("").to_string();
+                        let line_no = data["line_number"].as_u64().unwrap_or(0) as u32;
+                        let text = data["lines"]["text"]
+                            .as_str()
+                            .unwrap_or("")
+                            .trim_end_matches('\n')
+                            .to_string();
+                        let col = data["submatches"][0]["start"].as_u64().unwrap_or(0) as u32;
+                        self.results.push(SearchResult {
+                            file,
+                            line: line_no,
+                            col,
+                            text,
+                            context_before: Vec::new(),
+                            context_after: Vec::new(),
+                        });
+                        self.total_matches += 1;
+                        if self.results.len() >= 500 {
+                            break;
                         }
-                        _ => {}
                     }
                 }
             }
@@ -1610,12 +1732,18 @@ impl GlobalSearchState {
 
     /// Return the selected result as a `file:line` string for prompt injection.
     pub fn selected_ref(&self) -> Option<String> {
-        self.results.get(self.selected).map(|r| format!("{}:{}", r.file, r.line))
+        self.results
+            .get(self.selected)
+            .map(|r| format!("{}:{}", r.file, r.line))
     }
 }
 
 /// Render the global search dialog overlay.
-pub fn render_global_search(state: &GlobalSearchState, area: ratatui::layout::Rect, buf: &mut ratatui::buffer::Buffer) {
+pub fn render_global_search(
+    state: &GlobalSearchState,
+    area: ratatui::layout::Rect,
+    buf: &mut ratatui::buffer::Buffer,
+) {
     use ratatui::{
         layout::Rect,
         style::{Color, Modifier, Style},
@@ -1624,13 +1752,20 @@ pub fn render_global_search(state: &GlobalSearchState, area: ratatui::layout::Re
     };
     use std::path::Path;
 
-    if !state.open { return; }
+    if !state.visible {
+        return;
+    }
 
     let w = (area.width * 4 / 5).max(40).min(area.width);
     let h = (area.height * 3 / 4).max(10).min(area.height);
     let x = area.x + (area.width - w) / 2;
     let y = area.y + (area.height - h) / 4;
-    let dialog = Rect { x, y, width: w, height: h };
+    let dialog = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
 
     Clear.render(dialog, buf);
     Block::default()
@@ -1653,7 +1788,12 @@ pub fn render_global_search(state: &GlobalSearchState, area: ratatui::layout::Re
         Span::styled("\u{2588}", Style::default().fg(Color::Cyan)),
     ]);
     Paragraph::new(query_line).render(
-        Rect { x: inner.x, y: inner.y, width: inner.width, height: 1 },
+        Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: 1,
+        },
         buf,
     );
 
@@ -1663,7 +1803,12 @@ pub fn render_global_search(state: &GlobalSearchState, area: ratatui::layout::Re
         Style::default().fg(Color::DarkGray),
     ));
     Paragraph::new(sep).render(
-        Rect { x: inner.x, y: inner.y + 1, width: inner.width, height: 1 },
+        Rect {
+            x: inner.x,
+            y: inner.y + 1,
+            width: inner.width,
+            height: 1,
+        },
         buf,
     );
 
@@ -1717,17 +1862,22 @@ pub fn render_global_search(state: &GlobalSearchState, area: ratatui::layout::Re
 
     let max_visible = results_area.height as usize;
     // Scroll so the selected result is visible — find which display row it's in
-    let selected_display_row = rows.iter().position(|r| {
-        if let DisplayRow::Result { result_idx } = r {
-            *result_idx == state.selected
-        } else {
-            false
-        }
-    }).unwrap_or(0);
+    let selected_display_row = rows
+        .iter()
+        .position(|r| {
+            if let DisplayRow::Result { result_idx } = r {
+                *result_idx == state.selected
+            } else {
+                false
+            }
+        })
+        .unwrap_or(0);
     let start = selected_display_row.saturating_sub(max_visible / 2);
 
     for (i, row) in rows[start..].iter().enumerate() {
-        if i >= max_visible { break; }
+        if i >= max_visible {
+            break;
+        }
         let row_y = results_area.y + i as u16;
 
         match row {
@@ -1737,14 +1887,24 @@ pub fn render_global_search(state: &GlobalSearchState, area: ratatui::layout::Re
                 let label_part = format!(" {} ", label);
                 let dashes_right = (results_area.width as usize)
                     .saturating_sub(4 + label_part.len() + count_str.len());
-                let header_line = Line::from(vec![
-                    Span::styled(
-                        format!("\u{2500}\u{2500}\u{2500}{}{}{}", label_part, count_str, "\u{2500}".repeat(dashes_right)),
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                let header_line = Line::from(vec![Span::styled(
+                    format!(
+                        "\u{2500}\u{2500}\u{2500}{}{}{}",
+                        label_part,
+                        count_str,
+                        "\u{2500}".repeat(dashes_right)
                     ),
-                ]);
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )]);
                 Paragraph::new(header_line).render(
-                    Rect { x: results_area.x, y: row_y, width: results_area.width, height: 1 },
+                    Rect {
+                        x: results_area.x,
+                        y: row_y,
+                        width: results_area.width,
+                        height: 1,
+                    },
                     buf,
                 );
             }
@@ -1753,7 +1913,9 @@ pub fn render_global_search(state: &GlobalSearchState, area: ratatui::layout::Re
                 let selected = *result_idx == state.selected;
                 let prefix = if selected { "> " } else { "  " };
                 let style = if selected {
-                    Style::default().add_modifier(Modifier::BOLD).fg(Color::White)
+                    Style::default()
+                        .add_modifier(Modifier::BOLD)
+                        .fg(Color::White)
                 } else {
                     Style::default().fg(Color::Gray)
                 };
@@ -1762,16 +1924,20 @@ pub fn render_global_search(state: &GlobalSearchState, area: ratatui::layout::Re
                 let text_trimmed = result.text.trim();
                 let query_lc = state.query.to_lowercase();
                 let text_spans: Vec<Span<'static>> = if !query_lc.is_empty() {
-                    let text_lc = text_trimmed.to_lowercase();
-                    if let Some(pos) = text_lc.find(query_lc.as_str()) {
-                        let before: String = text_trimmed.chars().take(
-                            text_trimmed[..pos].chars().count()
-                        ).collect();
-                        let matched: String = text_trimmed[pos..pos + query_lc.len()].to_string();
-                        let after: String = text_trimmed[pos + query_lc.len()..].chars().take(30).collect();
+                    // Match case-insensitively but slice the ORIGINAL string on
+                    // its own char boundaries. to_lowercase() is not length- or
+                    // boundary-preserving (İ, K U+212A, ß), so indexing the
+                    // original with the lowercased copy's offsets panics (#221).
+                    if let Some((start, end)) = case_insensitive_find(text_trimmed, &query_lc) {
+                        let before: String = text_trimmed[..start].to_string();
+                        let matched: String = text_trimmed[start..end].to_string();
+                        let after: String = text_trimmed[end..].chars().take(30).collect();
                         vec![
                             Span::styled(before, style),
-                            Span::styled(matched, style.bg(Color::Rgb(60, 50, 0)).fg(Color::Yellow)),
+                            Span::styled(
+                                matched,
+                                style.bg(Color::Rgb(60, 50, 0)).fg(Color::Yellow),
+                            ),
                             Span::styled(after, style),
                         ]
                     } else {
@@ -1785,15 +1951,17 @@ pub fn render_global_search(state: &GlobalSearchState, area: ratatui::layout::Re
 
                 let mut spans = vec![
                     Span::styled(prefix.to_string(), style),
-                    Span::styled(
-                        format!("{:>4}  ", result.line),
-                        style.fg(Color::DarkGray),
-                    ),
+                    Span::styled(format!("{:>4}  ", result.line), style.fg(Color::DarkGray)),
                 ];
                 spans.extend(text_spans);
 
                 Paragraph::new(Line::from(spans)).render(
-                    Rect { x: results_area.x, y: row_y, width: results_area.width, height: 1 },
+                    Rect {
+                        x: results_area.x,
+                        y: row_y,
+                        width: results_area.width,
+                        height: 1,
+                    },
                     buf,
                 );
             }
@@ -1806,14 +1974,33 @@ pub fn render_global_search(state: &GlobalSearchState, area: ratatui::layout::Re
     } else if state.results.is_empty() && !state.query.is_empty() {
         "No matches".to_string()
     } else if state.total_matches > 0 {
-        format!("{} matches in {} files", state.total_matches,
-            state.results.iter().map(|r| &r.file).collect::<std::collections::HashSet<_>>().len())
+        format!(
+            "{} matches in {} files",
+            state.total_matches,
+            state
+                .results
+                .iter()
+                .map(|r| &r.file)
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+        )
     } else {
         "Type to search".to_string()
     };
     let status_y = inner.y + inner.height.saturating_sub(1);
-    Paragraph::new(Line::from(vec![Span::styled(status, Style::default().fg(Color::DarkGray))]))
-        .render(Rect { x: inner.x, y: status_y, width: inner.width, height: 1 }, buf);
+    Paragraph::new(Line::from(vec![Span::styled(
+        status,
+        Style::default().fg(Color::DarkGray),
+    )]))
+    .render(
+        Rect {
+            x: inner.x,
+            y: status_y,
+            width: inner.width,
+            height: 1,
+        },
+        buf,
+    );
 }
 
 // ============================================================================
@@ -1851,8 +2038,8 @@ mod tests {
     #[test]
     fn help_overlay_filter() {
         let mut h = HelpOverlay::new();
-        h.push_filter_char('h', );
-        h.push_filter_char('e', );
+        h.push_filter_char('h');
+        h.push_filter_char('e');
         assert_eq!(h.filter, "he");
         h.pop_filter_char();
         assert_eq!(h.filter, "h");
@@ -1872,7 +2059,11 @@ mod tests {
     #[test]
     fn history_search_update_matches() {
         // All three entries contain 'g', so all three match.
-        let history = vec!["git commit".to_string(), "cargo build".to_string(), "git push".to_string()];
+        let history = vec![
+            "git commit".to_string(),
+            "cargo build".to_string(),
+            "git push".to_string(),
+        ];
         let mut hs = HistorySearchOverlay::open(&history);
         hs.push_char('g', &history);
         assert_eq!(hs.matches.len(), 3);
@@ -1953,10 +2144,7 @@ mod tests {
     fn subseq_score_sorts_correctly_in_overlay() {
         // "git commit" and "get items together" both match query "git".
         // "git commit" is a substring match → higher score → appears first.
-        let history = vec![
-            "get items together".to_string(),
-            "git commit".to_string(),
-        ];
+        let history = vec!["get items together".to_string(), "git commit".to_string()];
         let mut hs = HistorySearchOverlay::open(&history);
         hs.push_char('g', &history);
         hs.push_char('i', &history);
@@ -2034,8 +2222,18 @@ mod tests {
     #[test]
     fn message_selector_open_selects_last() {
         let msgs = vec![
-            SelectorMessage { idx: 0, role: "user".to_string(), preview: "hi".to_string(), has_tool_use: false },
-            SelectorMessage { idx: 1, role: "assistant".to_string(), preview: "hello".to_string(), has_tool_use: false },
+            SelectorMessage {
+                idx: 0,
+                role: "user".to_string(),
+                preview: "hi".to_string(),
+                has_tool_use: false,
+            },
+            SelectorMessage {
+                idx: 1,
+                role: "assistant".to_string(),
+                preview: "hello".to_string(),
+                has_tool_use: false,
+            },
         ];
         let sel = MessageSelectorOverlay::open(msgs);
         assert_eq!(sel.selected_idx, 1);
@@ -2044,9 +2242,24 @@ mod tests {
     #[test]
     fn message_selector_navigate() {
         let msgs = vec![
-            SelectorMessage { idx: 0, role: "user".to_string(), preview: "a".to_string(), has_tool_use: false },
-            SelectorMessage { idx: 1, role: "assistant".to_string(), preview: "b".to_string(), has_tool_use: false },
-            SelectorMessage { idx: 2, role: "user".to_string(), preview: "c".to_string(), has_tool_use: false },
+            SelectorMessage {
+                idx: 0,
+                role: "user".to_string(),
+                preview: "a".to_string(),
+                has_tool_use: false,
+            },
+            SelectorMessage {
+                idx: 1,
+                role: "assistant".to_string(),
+                preview: "b".to_string(),
+                has_tool_use: false,
+            },
+            SelectorMessage {
+                idx: 2,
+                role: "user".to_string(),
+                preview: "c".to_string(),
+                has_tool_use: false,
+            },
         ];
         let mut sel = MessageSelectorOverlay::open(msgs);
         // starts at last
@@ -2063,21 +2276,30 @@ mod tests {
 
     #[test]
     fn rewind_flow_confirm_advances_step() {
-        let msgs = vec![
-            SelectorMessage { idx: 0, role: "user".to_string(), preview: "hi".to_string(), has_tool_use: false },
-        ];
+        let msgs = vec![SelectorMessage {
+            idx: 0,
+            role: "user".to_string(),
+            preview: "hi".to_string(),
+            has_tool_use: false,
+        }];
         let mut flow = RewindFlowOverlay::new();
         flow.open(msgs);
         let idx = flow.confirm_selection().unwrap();
         assert_eq!(idx, 0);
-        assert!(matches!(flow.step, RewindStep::Confirming { message_idx: 0 }));
+        assert!(matches!(
+            flow.step,
+            RewindStep::Confirming { message_idx: 0 }
+        ));
     }
 
     #[test]
     fn rewind_flow_accept_closes() {
-        let msgs = vec![
-            SelectorMessage { idx: 3, role: "user".to_string(), preview: "test".to_string(), has_tool_use: false },
-        ];
+        let msgs = vec![SelectorMessage {
+            idx: 3,
+            role: "user".to_string(),
+            preview: "test".to_string(),
+            has_tool_use: false,
+        }];
         let mut flow = RewindFlowOverlay::new();
         flow.open(msgs);
         flow.confirm_selection();
@@ -2088,9 +2310,12 @@ mod tests {
 
     #[test]
     fn rewind_flow_reject_returns_to_selector() {
-        let msgs = vec![
-            SelectorMessage { idx: 0, role: "user".to_string(), preview: "x".to_string(), has_tool_use: false },
-        ];
+        let msgs = vec![SelectorMessage {
+            idx: 0,
+            role: "user".to_string(),
+            preview: "x".to_string(),
+            has_tool_use: false,
+        }];
         let mut flow = RewindFlowOverlay::new();
         flow.open(msgs);
         flow.confirm_selection();
@@ -2098,5 +2323,88 @@ mod tests {
         flow.reject_confirm();
         assert_eq!(flow.step, RewindStep::Selecting);
         assert!(flow.visible);
+    }
+
+    // --- #221: char-boundary / width-underflow safety ------------------
+
+    #[test]
+    fn truncate_to_width_is_char_safe_and_no_underflow() {
+        // CJK (width-2) chars: byte slicing would panic mid-codepoint, and the
+        // widths 0/1 exercise the underflow-prone branches (#221).
+        let s = "\u{4f60}\u{597d}\u{4e16}\u{754c}"; // 你好世界
+        for w in 0..=10usize {
+            let out = truncate_to_width(s, w);
+            assert!(UnicodeWidthStr::width(out.as_str()) <= w.max(1));
+        }
+        assert_eq!(truncate_to_width("hi", 10), "hi");
+    }
+
+    #[test]
+    fn case_insensitive_find_handles_lossy_lowercase() {
+        // İ (U+0130) -> "i̇" (2 chars); K (U+212A) -> "k"; ẞ (U+1E9E) -> "ß".
+        // Indexing the original with the lowercased copy's offsets panics.
+        let cases = [
+            ("\u{0130}", "i"),        // İ
+            ("\u{212A}", "k"),        // K (Kelvin sign)
+            ("\u{1E9E}", "\u{00df}"), // ẞ matched by ß
+            ("abc\u{0130}def", "i"),  // match in the middle
+        ];
+        for (hay, needle_lc) in cases {
+            let (start, end) = case_insensitive_find(hay, needle_lc)
+                .unwrap_or_else(|| panic!("expected a match in {hay:?}"));
+            assert!(hay.is_char_boundary(start));
+            assert!(hay.is_char_boundary(end));
+            // All three slices used by the highlighter must be panic-free.
+            let _ = &hay[..start];
+            let _ = &hay[start..end];
+            let _ = &hay[end..];
+        }
+        assert!(case_insensitive_find("hello", "z").is_none());
+    }
+
+    #[test]
+    fn render_global_search_ci_highlight_no_panic() {
+        // Original text carries İ / K / ẞ; query "i" matches case-insensitively.
+        // Pre-fix, the slice used the lowercased copy's offset and panicked.
+        let state = GlobalSearchState {
+            visible: true,
+            query: "i".to_string(),
+            results: vec![SearchResult {
+                file: "a.txt".to_string(),
+                line: 1,
+                col: 1,
+                text: "\u{0130}stanbul \u{212A}elvin \u{1E9E}harp".to_string(),
+                context_before: vec![],
+                context_after: vec![],
+            }],
+            selected: 0,
+            total_matches: 1,
+            searching: false,
+        };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 60,
+            height: 20,
+        };
+        let mut buf = Buffer::empty(area);
+        render_global_search(&state, area, &mut buf); // no panic == pass
+    }
+
+    #[test]
+    fn render_message_selector_cjk_narrow_terminal_no_panic() {
+        use ratatui::{backend::TestBackend, Terminal};
+        // width 23 -> dialog_width 19 -> preview_max = 19 - 20 underflowed
+        // (panic) pre-fix, and byte-slicing the CJK preview panicked too (#221).
+        let overlay = MessageSelectorOverlay::open(vec![SelectorMessage {
+            idx: 0,
+            role: "user".to_string(),
+            preview: "\u{4f60}\u{597d}\u{4e16}\u{754c}".repeat(8), // long CJK
+            has_tool_use: false,
+        }]);
+        let mut terminal = Terminal::new(TestBackend::new(23, 20)).unwrap();
+        terminal
+            .draw(|frame| render_message_selector(frame, &overlay, frame.area()))
+            .unwrap(); // no panic == pass
     }
 }

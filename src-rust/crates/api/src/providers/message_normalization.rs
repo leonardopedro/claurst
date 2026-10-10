@@ -1,10 +1,7 @@
 use claurst_core::types::{ContentBlock, Message, MessageContent};
 
 pub(crate) fn remove_empty_messages(messages: &[Message]) -> Vec<Message> {
-    messages
-        .iter()
-        .filter_map(remove_empty_message)
-        .collect()
+    messages.iter().filter_map(remove_empty_message).collect()
 }
 
 pub(crate) fn normalize_anthropic_messages(messages: &[Message]) -> Vec<Message> {
@@ -122,6 +119,7 @@ mod tests {
                 id: "call:1/abc".to_string(),
                 name: "search".to_string(),
                 input: json!({"q": "test"}),
+                thought_signature: None,
             }]),
             Message::user_blocks(vec![ContentBlock::ToolResult {
                 tool_use_id: "call:1/abc".to_string(),

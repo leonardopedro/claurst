@@ -12,8 +12,9 @@ use crate::client::ClientConfig;
 use crate::provider::LlmProvider;
 use crate::provider_types::ProviderStatus;
 use crate::providers::{
-    AnthropicProvider, AzureProvider, BedrockProvider, ChutesProvider, CodexProvider, CohereProvider,
-    CopilotProvider, GoogleProvider, MinimaxProvider, OpenAiProvider,
+    AnthropicProvider, AzureProvider, BedrockProvider, ChutesProvider, CodexProvider,
+    CohereProvider, CopilotProvider, FreeEntry, FreeProvider, GoogleProvider, MinimaxProvider,
+    OpenAiProvider, FREE_CATALOG,
 };
 
 fn normalize_openai_compat_base(override_base: &str) -> String {
@@ -31,6 +32,14 @@ fn normalize_openai_base(override_base: &str) -> String {
         trimmed.trim_end_matches("/v1").to_string()
     } else {
         trimmed.to_string()
+    }
+}
+
+fn canonical_local_provider_id(provider_id: &str) -> &str {
+    match provider_id {
+        "lmstudio" => ProviderId::LM_STUDIO,
+        "llamacpp" | "llama-server" => ProviderId::LLAMA_CPP,
+        _ => provider_id,
     }
 }
 
@@ -63,9 +72,10 @@ fn provider_from_key(provider_id: &str, key: String) -> Option<Arc<dyn LlmProvid
     }
 
     match provider_id {
-        "anthropic" => Some(Arc::new(AnthropicProvider::from_config(
-            ClientConfig { api_key: key, ..Default::default() },
-        ))),
+        "anthropic" => Some(Arc::new(AnthropicProvider::from_config(ClientConfig {
+            api_key: key,
+            ..Default::default()
+        }))),
         "minimax" => Some(Arc::new(MinimaxProvider::new(key))),
         "openai" => Some(Arc::new(OpenAiProvider::new(key))),
         "google" => Some(Arc::new(GoogleProvider::new(key))),
@@ -77,11 +87,57 @@ fn provider_from_key(provider_id: &str, key: String) -> Option<Arc<dyn LlmProvid
         }
         "cohere" => Some(Arc::new(CohereProvider::new(key))),
         "custom-openai" => Some(Arc::new(p::custom_openai().with_api_key(key))),
-        "chutes" => {
-            Some(Arc::new(ChutesProvider::with_config(Some(key))))
-        }
+        "chutes" => Some(Arc::new(ChutesProvider::with_config(Some(key)))),
+        // "free" needs two keys (Zen + OpenRouter) — single-key path doesn't
+        // apply.  The auth-store-aware path `runtime_provider_for` handles it.
+        "free" => build_free_provider(),
         _ => None,
     }
+}
+
+/// Build a [`FreeProvider`] by walking [`FREE_CATALOG`] and pulling any keys
+/// the user has stored in the auth store. Each catalog entry whose upstream
+/// has a key becomes one link in the fallback chain.
+///
+/// Returns `None` only if *no* catalog entry has a configured key — a single
+/// key is enough to run, and more is better.
+pub fn build_free_provider() -> Option<Arc<dyn LlmProvider>> {
+    let auth_store = claurst_core::AuthStore::load();
+    let mut chain: Vec<FreeEntry> = Vec::new();
+
+    for upstream in FREE_CATALOG {
+        let key = match upstream.id {
+            // OpenCode Zen and Go share `OPENCODE_API_KEY`; accept either slot.
+            "opencode-zen" => auth_store
+                .api_key_for(claurst_core::ProviderId::OPENCODE_ZEN)
+                .or_else(|| auth_store.api_key_for(claurst_core::ProviderId::OPENCODE_GO)),
+            other => auth_store.api_key_for(other),
+        }
+        .filter(|k| !k.trim().is_empty());
+
+        let Some(key) = key else {
+            continue;
+        };
+
+        let provider: Option<Arc<dyn LlmProvider>> = match upstream.id {
+            "google" => Some(Arc::new(GoogleProvider::new(key))),
+            "cohere" => Some(Arc::new(CohereProvider::new(key))),
+            id => crate::providers::openai_compat_providers::provider_for_id(id)
+                .map(|p| Arc::new(p.with_api_key(key)) as Arc<dyn LlmProvider>),
+        };
+
+        if let Some(provider) = provider {
+            chain.push(FreeEntry {
+                upstream: *upstream,
+                provider,
+            });
+        }
+    }
+
+    if chain.is_empty() {
+        return None;
+    }
+    Some(Arc::new(FreeProvider::new(chain)) as Arc<dyn LlmProvider>)
 }
 
 pub fn provider_from_config(
@@ -96,7 +152,7 @@ pub fn provider_from_config(
 
     let api_key = config.resolve_provider_api_key(provider_id);
     let api_base = resolve_provider_api_base(config, provider_id).filter(|base| !base.is_empty());
-    
+
     // Resolve API key through password store if needed
     let api_key = if let Some(key) = api_key {
         if let Some(store) = password_store {
@@ -115,6 +171,9 @@ pub fn provider_from_config(
 
     match provider_id {
         "anthropic" => None,
+        // Composite "Free" provider — two keys are pulled internally from the
+        // auth store; the `api_key` resolved above is ignored.
+        "free" => build_free_provider(),
         "openai" => {
             let mut provider = OpenAiProvider::new(api_key.unwrap_or_default());
             if let Some(base) = api_base {
@@ -123,9 +182,20 @@ pub fn provider_from_config(
             Some(Arc::new(provider))
         }
         "google" => api_key.map(|key| Arc::new(GoogleProvider::new(key)) as Arc<dyn LlmProvider>),
-        "minimax" => {
-            api_key.map(|key| Arc::new(MinimaxProvider::new(key)) as Arc<dyn LlmProvider>)
-        }
+        "minimax" => api_key.map(|key| {
+            let mut provider = MinimaxProvider::new(key);
+            if let Some(base) = api_base {
+                provider = provider.with_base_url(base);
+            }
+            if let Some(service_tier) = provider_cfg
+                .and_then(|config| config.options.get("service_tier"))
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+            {
+                provider = provider.with_service_tier(service_tier);
+            }
+            Arc::new(provider) as Arc<dyn LlmProvider>
+        }),
         "azure" => {
             let resource_name = provider_cfg
                 .and_then(|provider| provider.options.get("resource_name"))
@@ -139,9 +209,9 @@ pub fn provider_from_config(
                 });
 
             match (resource_name, api_key) {
-                (Some(resource_name), Some(key)) => Some(
-                    Arc::new(AzureProvider::new(resource_name, key)) as Arc<dyn LlmProvider>
-                ),
+                (Some(resource_name), Some(key)) => {
+                    Some(Arc::new(AzureProvider::new(resource_name, key)) as Arc<dyn LlmProvider>)
+                }
                 _ => None,
             }
         }
@@ -240,6 +310,10 @@ pub fn runtime_provider_for(provider_id: &str) -> Option<Arc<dyn LlmProvider>> {
         "codex" | "openai-codex" => {
             return CodexProvider::from_stored().map(|p| Arc::new(p) as Arc<dyn LlmProvider>);
         }
+        // "free" pulls two keys (Zen + OpenRouter) from the auth store and
+        // wraps them in a fallback composite — handled here so the generic
+        // single-key path below doesn't short-circuit on a missing key.
+        "free" => return build_free_provider(),
         _ => {}
     }
 
@@ -272,18 +346,24 @@ impl ProviderRegistry {
     /// # Panics
     /// Panics if no provider with that ID has been registered.
     pub fn set_default(&mut self, id: ProviderId) -> &mut Self {
+        let canonical_id = ProviderId::new(canonical_local_provider_id(&id));
         assert!(
-            self.providers.contains_key(&id),
+            self.providers.contains_key(&canonical_id),
             "set_default: provider '{}' is not registered",
             id,
         );
-        self.default_provider_id = id;
+        self.default_provider_id = canonical_id;
         self
     }
 
     /// Get a provider by ID.
     pub fn get(&self, id: &ProviderId) -> Option<&Arc<dyn LlmProvider>> {
-        self.providers.get(id)
+        self.providers.get(id).or_else(|| {
+            let canonical_id = canonical_local_provider_id(id);
+            (canonical_id != &**id)
+                .then(|| self.providers.get(&ProviderId::new(canonical_id)))
+                .flatten()
+        })
     }
 
     /// Get the default provider.
@@ -334,15 +414,21 @@ impl ProviderRegistry {
         anthropic_config: ClientConfig,
         password_store: Option<Arc<dyn claurst_core::PasswordStore>>,
     ) -> Self {
+        // Apply the user-configured request timeout (issue #175) before any
+        // provider HTTP clients are built, so they all honour it. Uses the
+        // active provider's resolved value (per-provider override or global).
+        crate::set_request_timeout_secs(
+            config.resolve_request_timeout_secs(config.selected_provider_id()),
+        );
         let mut registry = Self::from_environment_with_auth_store(anthropic_config);
         let active_provider = config.selected_provider_id();
 
-        let mut configured_provider_ids: Vec<String> = config
-            .provider_configs
-            .keys()
-            .cloned()
-            .collect();
-        if configured_provider_ids.iter().all(|id| id != active_provider) {
+        let mut configured_provider_ids: Vec<String> =
+            config.provider_configs.keys().cloned().collect();
+        if configured_provider_ids
+            .iter()
+            .all(|id| id != active_provider)
+        {
             configured_provider_ids.push(active_provider.to_string());
         }
 
@@ -465,7 +551,7 @@ impl ProviderRegistry {
         // env vars.
         let auth_store = claurst_core::AuthStore::load();
 
-        for (provider_id, _cred) in &auth_store.credentials {
+        for provider_id in auth_store.credentials.keys() {
             let pid = claurst_core::ProviderId::new(provider_id.as_str());
             // Skip if already registered from env vars.
             if registry.get(&pid).is_some() {
@@ -505,96 +591,192 @@ impl ProviderRegistry {
         self.register(Arc::new(p::llama_cpp()));
 
         // Remote providers — only register when an API key is present.
-        if std::env::var("DEEPSEEK_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("DEEPSEEK_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::deepseek()));
         }
-        if std::env::var("GROQ_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("GROQ_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::groq()));
         }
-        if std::env::var("XAI_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("XAI_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::xai()));
         }
-        if std::env::var("OPENROUTER_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("OPENROUTER_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::openrouter()));
         }
-        if std::env::var("TOGETHER_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("TOGETHER_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::together_ai()));
         }
-        if std::env::var("PERPLEXITY_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("PERPLEXITY_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::perplexity()));
         }
-        if std::env::var("CEREBRAS_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("CEREBRAS_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::cerebras()));
         }
-        if std::env::var("DEEPINFRA_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("DEEPINFRA_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::deepinfra()));
         }
-        if std::env::var("VENICE_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("VENICE_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::venice()));
         }
-        if std::env::var("DASHSCOPE_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("DASHSCOPE_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::qwen()));
         }
-        if std::env::var("MISTRAL_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("MISTRAL_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::mistral()));
         }
-        if std::env::var("SAMBANOVA_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("SAMBANOVA_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::sambanova()));
         }
-        if std::env::var("HF_TOKEN").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("HF_TOKEN")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::huggingface()));
         }
-        if std::env::var("MINIMAX_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("MINIMAX_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             let key = std::env::var("MINIMAX_API_KEY").unwrap_or_default();
             self.register(Arc::new(MinimaxProvider::new(key)));
         }
-        if std::env::var("NVIDIA_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("NVIDIA_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::nvidia()));
         }
-        if std::env::var("SILICONFLOW_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("SILICONFLOW_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::siliconflow()));
         }
-        if std::env::var("MOONSHOT_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("MOONSHOT_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::moonshot()));
         }
-        if std::env::var("ZHIPU_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("ZHIPU_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::zhipu()));
         }
-        if std::env::var("ZAI_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("ZAI_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::zai()));
         }
-        if std::env::var("NEBIUS_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("NEBIUS_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::nebius()));
         }
-        if std::env::var("NOVITA_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("NOVITA_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::novita()));
         }
-        if std::env::var("OVHCLOUD_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("OVHCLOUD_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::ovhcloud()));
         }
-        if std::env::var("SCALEWAY_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("SCALEWAY_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::scaleway()));
         }
-        if std::env::var("VULTR_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("VULTR_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::vultr_ai()));
         }
-        if std::env::var("BASETEN_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("BASETEN_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::baseten()));
         }
-        if std::env::var("FRIENDLI_TOKEN").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("FRIENDLI_TOKEN")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::friendli()));
         }
-        if std::env::var("UPSTAGE_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("UPSTAGE_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::upstage()));
         }
-        if std::env::var("STEPFUN_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("STEPFUN_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::stepfun()));
         }
-        if std::env::var("FIREWORKS_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("FIREWORKS_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(p::fireworks()));
         }
-        if std::env::var("CHUTES_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+        if std::env::var("CHUTES_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             self.register(Arc::new(ChutesProvider::new()));
+        }
+        if std::env::var("OPENCODE_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
+            self.register(Arc::new(p::opencode_go()));
         }
         self
     }
@@ -603,5 +785,37 @@ impl ProviderRegistry {
 impl Default for ProviderRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::providers;
+
+    #[test]
+    fn local_provider_aliases_resolve_to_canonical_registrations() {
+        let mut registry = ProviderRegistry::new();
+        registry.register(Arc::new(providers::lm_studio()));
+        registry.register(Arc::new(providers::llama_cpp()));
+
+        let lm_studio = registry
+            .get(&ProviderId::new("lmstudio"))
+            .expect("lmstudio alias should resolve");
+        let llama_cpp = registry
+            .get(&ProviderId::new("llamacpp"))
+            .expect("llamacpp alias should resolve");
+
+        assert_eq!(&**lm_studio.id(), ProviderId::LM_STUDIO);
+        assert_eq!(&**llama_cpp.id(), ProviderId::LLAMA_CPP);
+    }
+
+    #[test]
+    fn alias_can_select_canonical_default_provider() {
+        let mut registry = ProviderRegistry::new();
+        registry.register(Arc::new(providers::lm_studio()));
+        registry.set_default(ProviderId::new("lmstudio"));
+
+        assert_eq!(&**registry.default_provider_id(), ProviderId::LM_STUDIO);
     }
 }

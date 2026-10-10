@@ -132,11 +132,6 @@ static ALL_TIPS: Lazy<Vec<Tip>> = Lazy::new(|| {
             cooldown_sessions: 15,
         },
         Tip {
-            id: "feedback-command",
-            content: "Use /feedback to help us improve!",
-            cooldown_sessions: 15,
-        },
-        Tip {
             id: "status-line",
             content: "Use /statusline to set up a custom status line that will display beneath the input box",
             cooldown_sessions: 25,
@@ -191,7 +186,7 @@ pub struct TipHistory {
 impl TipHistory {
     /// Path to the persisted history file: `~/.claurst/tip_history.json`.
     fn history_path() -> Option<std::path::PathBuf> {
-        dirs::home_dir().map(|h| h.join(".claurst").join("tip_history.json"))
+        Some(crate::config::Settings::config_dir().join("tip_history.json"))
     }
 
     /// Load history from `~/.claurst/tip_history.json`.
@@ -304,7 +299,7 @@ pub fn select_tip(session_num: u64) -> Option<&'static Tip> {
     }
 
     // Sort by least recently shown (highest `sessions_since` first).
-    candidates.sort_by(|a, b| b.1.cmp(&a.1));
+    candidates.sort_by_key(|b| std::cmp::Reverse(b.1));
     Some(candidates[0].0)
 }
 
@@ -329,10 +324,7 @@ mod tests {
                 "tip '{}' has empty content",
                 tip.id
             );
-            assert!(
-                !tip.id.is_empty(),
-                "a tip has an empty id"
-            );
+            assert!(!tip.id.is_empty(), "a tip has an empty id");
         }
     }
 
@@ -340,11 +332,7 @@ mod tests {
     fn all_tip_ids_unique() {
         let mut ids = std::collections::HashSet::new();
         for tip in all_tips() {
-            assert!(
-                ids.insert(tip.id),
-                "duplicate tip id: {}",
-                tip.id
-            );
+            assert!(ids.insert(tip.id), "duplicate tip id: {}", tip.id);
         }
     }
 
@@ -379,7 +367,10 @@ mod tests {
         // Use a very large session number so sessions_since is always >= cooldown
         // regardless of any real on-disk history (avoids test/disk coupling).
         let result = select_tip(1_000_000);
-        assert!(result.is_some(), "select_tip should return a tip for a large session number");
+        assert!(
+            result.is_some(),
+            "select_tip should return a tip for a large session number"
+        );
     }
 
     #[test]

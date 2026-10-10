@@ -11,6 +11,11 @@ pub struct LspTool;
 
 #[async_trait]
 impl Tool for LspTool {
+    // Gates itself: calls `ctx.check_permission_for_path` in `execute()` (#210).
+    fn self_gates(&self) -> bool {
+        true
+    }
+
     fn name(&self) -> &str {
         "LSP"
     }
@@ -73,15 +78,18 @@ impl Tool for LspTool {
                 .into_owned()
         };
 
+        if let Err(e) = ctx.check_permission_for_path(
+            self.name(),
+            &format!("LSP {} {}", action, file_path),
+            std::path::PathBuf::from(&file_path),
+            true,
+        ) {
+            return ToolResult::error(e.to_string());
+        }
+
         // line/column only required for position-based actions
-        let line = input
-            .get("line")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1) as u32;
-        let column = input
-            .get("column")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1) as u32;
+        let line = input.get("line").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+        let column = input.get("column").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
 
         // --- Seed the global LSP manager with configs from current session ---
         let lsp_manager_arc = claurst_core::lsp::global_lsp_manager();

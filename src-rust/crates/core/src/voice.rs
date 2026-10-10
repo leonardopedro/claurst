@@ -40,7 +40,9 @@ pub enum VoiceAvailability {
     /// Feature flag not enabled in this build
     NotEnabled,
     /// No microphone / audio device available on this system
-    NoMicrophone { reason: String },
+    NoMicrophone {
+        reason: String,
+    },
     /// Voice input is enabled but the user has toggled it off
     ToggledOff,
 }
@@ -57,8 +59,7 @@ impl VoiceAvailability {
         match self {
             VoiceAvailability::Available => None,
             VoiceAvailability::RequiresOAuth => Some(
-                "Voice mode requires OAuth authentication. Run /login to authenticate."
-                    .to_string(),
+                "Voice mode requires OAuth authentication. Run /login to authenticate.".to_string(),
             ),
             VoiceAvailability::MissingScopes { required, have } => Some(format!(
                 "Voice mode requires scopes: {}. Your token has: {}",
@@ -69,16 +70,14 @@ impl VoiceAvailability {
                     have.join(", ")
                 }
             )),
-            VoiceAvailability::Disabled => {
-                Some("Voice mode is currently disabled.".to_string())
-            }
+            VoiceAvailability::Disabled => Some("Voice mode is currently disabled.".to_string()),
             VoiceAvailability::NotEnabled => {
                 Some("Voice mode is not enabled in this build.".to_string())
             }
             VoiceAvailability::NoMicrophone { reason } => Some(reason.clone()),
-            VoiceAvailability::ToggledOff => Some(
-                "Voice input is disabled. Run /voice to enable.".to_string(),
-            ),
+            VoiceAvailability::ToggledOff => {
+                Some("Voice input is disabled. Run /voice to enable.".to_string())
+            }
         }
     }
 }
@@ -299,7 +298,9 @@ fn platform_no_mic_message() -> String {
     } else if cfg!(target_os = "macos") {
         "No microphone found. Check System Settings \u{2192} Privacy & Security \u{2192} Microphone.".to_string()
     } else {
-        "No microphone found. Connect a microphone and ensure your audio system is configured correctly.".to_string()
+        "No microphone found. Check that a microphone is connected and ALSA/PulseAudio is configured. \
+         On Debian/Ubuntu run: sudo apt install libasound2-dev && arecord -l (to list devices). \
+         Set ALSA_CARD or PULSE_SERVER if needed.".to_string()
     }
 }
 
@@ -316,8 +317,7 @@ async fn record_and_transcribe(
 ) -> anyhow::Result<()> {
     #[cfg(feature = "voice")]
     {
-        let (samples, sample_rate) =
-            record_audio(is_recording, event_tx.clone()).await?;
+        let (samples, sample_rate) = record_audio(is_recording, event_tx.clone()).await?;
 
         let _ = event_tx.send(VoiceEvent::RecordingStopped).await;
 
@@ -325,11 +325,29 @@ async fn record_and_transcribe(
             return Ok(());
         }
 
-        let api_key = match &config.api_key {
-            Some(k) if !k.is_empty() => k.clone(),
-            _ => {
-                let msg = "Voice transcription requires an API key. \
-                           Set OPENAI_API_KEY or configure voice.api_key."
+        // Resolve API key: explicit config first, then OPENAI_API_KEY, then ANTHROPIC_API_KEY.
+        let api_key_opt = config
+            .api_key
+            .as_deref()
+            .filter(|k| !k.is_empty())
+            .map(|k| k.to_string())
+            .or_else(|| {
+                std::env::var("OPENAI_API_KEY")
+                    .ok()
+                    .filter(|k| !k.is_empty())
+            })
+            .or_else(|| {
+                std::env::var("ANTHROPIC_API_KEY")
+                    .ok()
+                    .filter(|k| !k.is_empty())
+            });
+
+        let api_key = match api_key_opt {
+            Some(k) => k,
+            None => {
+                let msg = "No API key found for voice transcription. \
+                           Set OPENAI_API_KEY, or point WHISPER_ENDPOINT_URL to a \
+                           local Whisper server (e.g. whisper.cpp or faster-whisper)."
                     .to_string();
                 let _ = event_tx.send(VoiceEvent::Error(msg.clone())).await;
                 return Err(anyhow::anyhow!(msg));
@@ -361,7 +379,8 @@ async fn record_and_transcribe(
     {
         let _ = is_recording;
         let _ = config;
-        let msg = "Voice recording is not available in this build (compile with --features voice).".to_string();
+        let msg = "Voice recording is not available in this build (compile with --features voice)."
+            .to_string();
         let _ = event_tx.send(VoiceEvent::Error(msg.clone())).await;
         Err(anyhow::anyhow!(msg))
     }
@@ -391,6 +410,8 @@ async fn record_audio(
     let samples: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
     let samples_clone = samples.clone();
 
+    let err_tx = event_tx.clone();
+    let is_recording_for_err = is_recording.clone();
     let stream = {
         let config: cpal::StreamConfig = supported_config.into();
         device.build_input_stream(
@@ -410,6 +431,10 @@ async fn record_audio(
             },
             move |err| {
                 tracing::error!("Audio stream error: {}", err);
+                // Stop the recording loop so the thread exits cleanly.
+                is_recording_for_err.store(false, Ordering::SeqCst);
+                let msg = format!("Audio capture error: {}. Check your microphone and ALSA/PulseAudio configuration.", err);
+                let _ = err_tx.try_send(VoiceEvent::Error(msg));
             },
             None,
         )?
@@ -485,8 +510,7 @@ async fn transcribe_audio(
 ) -> anyhow::Result<String> {
     let wav_data = encode_wav(audio_samples, sample_rate)?;
 
-    let url = endpoint_url
-        .unwrap_or("https://api.openai.com/v1/audio/transcriptions");
+    let url = endpoint_url.unwrap_or("https://api.openai.com/v1/audio/transcriptions");
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
@@ -522,11 +546,7 @@ async fn transcribe_audio(
     }
 
     let json: serde_json::Value = response.json().await?;
-    let text = json["text"]
-        .as_str()
-        .unwrap_or("")
-        .trim()
-        .to_string();
+    let text = json["text"].as_str().unwrap_or("").trim().to_string();
     Ok(text)
 }
 
@@ -570,6 +590,8 @@ mod tests {
 
     #[test]
     fn test_no_tokens_requires_oauth() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var(KILL_SWITCH_ENV);
         let result = check_voice_availability(None);
         assert_eq!(result, VoiceAvailability::RequiresOAuth);
         assert!(!result.is_available());
@@ -578,6 +600,8 @@ mod tests {
 
     #[test]
     fn test_available_with_all_scopes() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var(KILL_SWITCH_ENV);
         let tokens = tokens_with_scopes(vec!["user:inference", "user:profile"]);
         let result = check_voice_availability(Some(&tokens));
         assert_eq!(result, VoiceAvailability::Available);
@@ -587,6 +611,8 @@ mod tests {
 
     #[test]
     fn test_missing_one_scope() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var(KILL_SWITCH_ENV);
         let tokens = tokens_with_scopes(vec!["user:inference"]);
         let result = check_voice_availability(Some(&tokens));
         assert!(matches!(result, VoiceAvailability::MissingScopes { .. }));
@@ -607,6 +633,8 @@ mod tests {
 
     #[test]
     fn test_empty_scopes_missing() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var(KILL_SWITCH_ENV);
         let tokens = tokens_with_scopes(vec![]);
         let result = check_voice_availability(Some(&tokens));
         assert!(
@@ -645,6 +673,8 @@ mod tests {
 
     #[test]
     fn test_extra_scopes_still_available() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var(KILL_SWITCH_ENV);
         let tokens = tokens_with_scopes(vec![
             "user:inference",
             "user:profile",

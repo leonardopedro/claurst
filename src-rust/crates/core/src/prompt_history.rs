@@ -137,9 +137,7 @@ static STATE: once_cell::sync::Lazy<Mutex<HistoryState>> =
 // ---------------------------------------------------------------------------
 
 fn claude_home() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".claurst")
+    crate::config::Settings::config_dir()
 }
 
 fn history_path() -> PathBuf {
@@ -413,10 +411,7 @@ pub fn add_to_history(entry: HistoryEntry) {
 /// Read `~/.claurst/history.jsonl`, filter by `project`, and return up to
 /// `MAX_HISTORY_ITEMS` entries newest-first.  Entries belonging to
 /// `current_session_id` are yielded before other sessions' entries.
-pub async fn get_history(
-    project: &str,
-    current_session_id: Option<&str>,
-) -> Vec<HistoryEntry> {
+pub async fn get_history(project: &str, current_session_id: Option<&str>) -> Vec<HistoryEntry> {
     let path = history_path();
 
     let (pending, skipped) = {
@@ -426,11 +421,7 @@ pub async fn get_history(
 
     // Read lines from disk newest-first (reverse the file).
     let disk_lines: Vec<String> = match fs::read_to_string(&path).await {
-        Ok(content) => content
-            .lines()
-            .rev()
-            .map(|l| l.to_string())
-            .collect(),
+        Ok(content) => content.lines().rev().map(|l| l.to_string()).collect(),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
         Err(e) => {
             debug!("Failed to read history file: {}", e);
@@ -469,9 +460,7 @@ pub async fn get_history(
     let mut other_entries: Vec<&LogEntry> = Vec::new();
 
     for entry in all_entries.iter().filter(|e| e.project == project) {
-        if current_session_id.is_some()
-            && entry.session_id.as_deref() == current_session_id
-        {
+        if current_session_id.is_some() && entry.session_id.as_deref() == current_session_id {
             current_session_entries.push(entry);
         } else {
             other_entries.push(entry);
@@ -539,10 +528,7 @@ async fn resolve_stored(stored: &StoredPastedContent) -> Option<PastedContent> {
 ///
 /// Image references (`[Image #N]`) are left unchanged.  Replacements are
 /// applied in reverse-index order to keep earlier byte offsets valid.
-pub fn expand_pasted_text_refs(
-    input: &str,
-    contents: &HashMap<u32, PastedContent>,
-) -> String {
+pub fn expand_pasted_text_refs(input: &str, contents: &HashMap<u32, PastedContent>) -> String {
     let refs = parse_references_with_positions(input);
     let mut expanded = input.to_string();
 
@@ -572,18 +558,17 @@ pub fn parse_references(input: &str) -> Vec<u32> {
         .collect()
 }
 
-/// Internal: return `(id, matched_string, byte_offset)` for each reference.
-fn parse_references_with_positions(input: &str) -> Vec<(u32, String, usize)> {
+/// Return `(id, matched_string, byte_offset)` for each reference in `input`.
+///
+/// Callers that need to distinguish reference kinds can inspect the matched
+/// string's prefix (`[Pasted text #`, `[Image #`, `[...Truncated text #`).
+pub fn parse_references_with_positions(input: &str) -> Vec<(u32, String, usize)> {
     // Recognised prefixes (from the TS regex):
     //   [Pasted text #N]
     //   [Pasted text #N +X lines]
     //   [...Truncated text #N]
     //   [Image #N]
-    let prefixes: &[&str] = &[
-        "[Pasted text #",
-        "[...Truncated text #",
-        "[Image #",
-    ];
+    let prefixes: &[&str] = &["[Pasted text #", "[...Truncated text #", "[Image #"];
 
     let mut results = Vec::new();
     let bytes = input.as_bytes();
@@ -633,9 +618,7 @@ fn parse_references_with_positions(input: &str) -> Vec<(u32, String, usize)> {
 
         // Optional ` +N lines` suffix.
         let after_suffix = if let Some(s) = after_id.strip_prefix(" +") {
-            let dn = s
-                .find(|c: char| !c.is_ascii_digit())
-                .unwrap_or(s.len());
+            let dn = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
             let rest2 = &s[dn..];
             rest2.strip_prefix(" lines").unwrap_or(after_id)
         } else {
@@ -646,10 +629,7 @@ fn parse_references_with_positions(input: &str) -> Vec<(u32, String, usize)> {
         let after_dots = after_suffix.trim_start_matches('.');
 
         if after_dots.starts_with(']') {
-            let consumed = prefix.len()
-                + digit_end
-                + (after_id.len() - after_dots.len())
-                + 1; // `]`
+            let consumed = prefix.len() + digit_end + (after_id.len() - after_dots.len()) + 1; // `]`
             let matched = input[i..i + consumed].to_string();
             results.push((id, matched, i));
             i += consumed;
@@ -798,8 +778,7 @@ mod tests {
                 filename: None,
             },
         );
-        let result =
-            expand_pasted_text_refs("X [Pasted text #1 +1 lines] Y", &contents);
+        let result = expand_pasted_text_refs("X [Pasted text #1 +1 lines] Y", &contents);
         assert_eq!(result, "X line1\nline2 Y");
     }
 
@@ -844,8 +823,7 @@ mod tests {
                 filename: None,
             },
         );
-        let result =
-            expand_pasted_text_refs("[Pasted text #1] and [Pasted text #2]", &contents);
+        let result = expand_pasted_text_refs("[Pasted text #1] and [Pasted text #2]", &contents);
         assert_eq!(result, "AAA and BBB");
     }
 

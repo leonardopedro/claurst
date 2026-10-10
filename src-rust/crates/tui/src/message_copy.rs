@@ -30,7 +30,9 @@ pub fn copy_as_markdown(message: &Message) -> String {
                             signature, thinking
                         ))
                     }
-                    claurst_core::ContentBlock::ToolUse { id, name, input } => {
+                    claurst_core::ContentBlock::ToolUse {
+                        id, name, input, ..
+                    } => {
                         // Format tool use as code block
                         Some(format!(
                             "```json\n// Tool: {}\n// ID: {}\n{}\n```",
@@ -51,21 +53,16 @@ pub fn copy_as_markdown(message: &Message) -> String {
                         };
                         let result_text = match content {
                             claurst_core::ToolResultContent::Text(text) => text.clone(),
-                            claurst_core::ToolResultContent::Blocks(blocks) => {
-                                blocks
-                                    .iter()
-                                    .filter_map(|b| match b {
-                                        claurst_core::ContentBlock::Text { text } => Some(text.clone()),
-                                        _ => None,
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join("\n")
-                            }
+                            claurst_core::ToolResultContent::Blocks(blocks) => blocks
+                                .iter()
+                                .filter_map(|b| match b {
+                                    claurst_core::ContentBlock::Text { text } => Some(text.clone()),
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n"),
                         };
-                        Some(format!(
-                            "```\n{}{}\n```",
-                            error_marker, result_text
-                        ))
+                        Some(format!("```\n{}{}\n```", error_marker, result_text))
                     }
                     _ => None,
                 })
@@ -81,47 +78,43 @@ pub fn copy_as_markdown(message: &Message) -> String {
 pub fn copy_as_plaintext(message: &Message) -> String {
     let content = match &message.content {
         claurst_core::MessageContent::Text(text) => strip_markdown(text),
-        claurst_core::MessageContent::Blocks(blocks) => {
-            blocks
-                .iter()
-                .filter_map(|block| match block {
-                    claurst_core::ContentBlock::Text { text } => Some(strip_markdown(text)),
-                    claurst_core::ContentBlock::Thinking { thinking, .. } => {
-                        Some(format!("[Thinking]\n{}", thinking))
-                    }
-                    claurst_core::ContentBlock::ToolUse { name, input, .. } => {
-                        Some(format!(
-                            "[Tool: {}]\n{}",
-                            name,
-                            serde_json::to_string_pretty(input).unwrap_or_default()
-                        ))
-                    }
-                    claurst_core::ContentBlock::ToolResult { content, is_error, .. } => {
-                        let error_marker = if is_error.unwrap_or(false) {
-                            "[ERROR] "
-                        } else {
-                            ""
-                        };
-                        let result_text = match content {
-                            claurst_core::ToolResultContent::Text(text) => text.clone(),
-                            claurst_core::ToolResultContent::Blocks(blocks) => {
-                                blocks
-                                    .iter()
-                                    .filter_map(|b| match b {
-                                        claurst_core::ContentBlock::Text { text } => Some(text.clone()),
-                                        _ => None,
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join("\n")
-                            }
-                        };
-                        Some(format!("{}{}", error_marker, result_text))
-                    }
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n")
-        }
+        claurst_core::MessageContent::Blocks(blocks) => blocks
+            .iter()
+            .filter_map(|block| match block {
+                claurst_core::ContentBlock::Text { text } => Some(strip_markdown(text)),
+                claurst_core::ContentBlock::Thinking { thinking, .. } => {
+                    Some(format!("[Thinking]\n{}", thinking))
+                }
+                claurst_core::ContentBlock::ToolUse { name, input, .. } => Some(format!(
+                    "[Tool: {}]\n{}",
+                    name,
+                    serde_json::to_string_pretty(input).unwrap_or_default()
+                )),
+                claurst_core::ContentBlock::ToolResult {
+                    content, is_error, ..
+                } => {
+                    let error_marker = if is_error.unwrap_or(false) {
+                        "[ERROR] "
+                    } else {
+                        ""
+                    };
+                    let result_text = match content {
+                        claurst_core::ToolResultContent::Text(text) => text.clone(),
+                        claurst_core::ToolResultContent::Blocks(blocks) => blocks
+                            .iter()
+                            .filter_map(|b| match b {
+                                claurst_core::ContentBlock::Text { text } => Some(text.clone()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    };
+                    Some(format!("{}{}", error_marker, result_text))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n"),
     };
 
     let role_str = match message.role {
@@ -167,7 +160,7 @@ pub fn copy_as_json(message: &Message) -> String {
         "content": match &message.content {
             claurst_core::MessageContent::Text(text) => text.clone(),
             claurst_core::MessageContent::Blocks(blocks) => {
-                blocks.iter().map(|b| format_block_for_json(b)).collect::<Vec<_>>().join("\n")
+                blocks.iter().map(format_block_for_json).collect::<Vec<_>>().join("\n")
             }
         },
         "uuid": message.uuid,
@@ -225,7 +218,7 @@ fn strip_markdown(text: &str) -> String {
                 // Handle markdown links: [text](url) -> text
                 let mut link_text = String::new();
                 let mut found_close = false;
-                while let Some(ch) = chars.next() {
+                for ch in chars.by_ref() {
                     if ch == ']' {
                         found_close = true;
                         break;
@@ -236,7 +229,7 @@ fn strip_markdown(text: &str) -> String {
                 // Skip URL part
                 if found_close && chars.peek() == Some(&'(') {
                     chars.next(); // consume '('
-                    while let Some(ch) = chars.next() {
+                    for ch in chars.by_ref() {
                         if ch == ')' {
                             break;
                         }
@@ -258,14 +251,14 @@ fn strip_markdown(text: &str) -> String {
                 // Skip markdown image syntax ![alt](url)
                 if chars.peek() == Some(&'[') {
                     chars.next();
-                    while let Some(c) = chars.next() {
+                    for c in chars.by_ref() {
                         if c == ']' {
                             break;
                         }
                     }
                     if chars.peek() == Some(&'(') {
                         chars.next();
-                        while let Some(c) = chars.next() {
+                        for c in chars.by_ref() {
                             if c == ')' {
                                 break;
                             }
@@ -296,10 +289,10 @@ fn extract_code_blocks_from_text(text: &str, blocks: &mut Vec<String>) {
     let mut in_block = false;
     let mut current_block = String::new();
     let mut language = String::new();
-    let mut lines = text.lines().peekable();
+    let lines = text.lines().peekable();
 
-    while let Some(line) = lines.next() {
-        if line.starts_with("```") {
+    for line in lines {
+        if let Some(after_fence) = line.strip_prefix("```") {
             if in_block {
                 // End of code block
                 if !current_block.trim().is_empty() {
@@ -311,7 +304,7 @@ fn extract_code_blocks_from_text(text: &str, blocks: &mut Vec<String>) {
             } else {
                 // Start of code block
                 in_block = true;
-                language = line[3..].trim().to_string();
+                language = after_fence.trim().to_string();
             }
         } else if in_block {
             current_block.push_str(line);
@@ -330,7 +323,9 @@ fn format_block_for_json(block: &claurst_core::ContentBlock) -> String {
     match block {
         claurst_core::ContentBlock::Text { text } => text.clone(),
         claurst_core::ContentBlock::Image { .. } => "[Image content]".to_string(),
-        claurst_core::ContentBlock::ToolUse { id, name, input } => {
+        claurst_core::ContentBlock::ToolUse {
+            id, name, input, ..
+        } => {
             format!(
                 "[Tool: {} (ID: {})]\n{}",
                 name,
@@ -350,16 +345,14 @@ fn format_block_for_json(block: &claurst_core::ContentBlock) -> String {
             };
             let result_text = match content {
                 claurst_core::ToolResultContent::Text(text) => text.clone(),
-                claurst_core::ToolResultContent::Blocks(blocks) => {
-                    blocks
-                        .iter()
-                        .filter_map(|b| match b {
-                            claurst_core::ContentBlock::Text { text } => Some(text.clone()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                }
+                claurst_core::ToolResultContent::Blocks(blocks) => blocks
+                    .iter()
+                    .filter_map(|b| match b {
+                        claurst_core::ContentBlock::Text { text } => Some(text.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
             };
             format!("{}{}", error_marker, result_text)
         }
@@ -394,7 +387,11 @@ pub fn copy_to_clipboard(text: &str) -> bool {
         {
             let escaped = text.replace('\'', "''");
             if let Ok(mut child) = std::process::Command::new("powershell")
-                .args(["-NoProfile", "-Command", &format!("Set-Clipboard '{}'", escaped)])
+                .args([
+                    "-NoProfile",
+                    "-Command",
+                    &format!("Set-Clipboard '{}'", escaped),
+                ])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .spawn()
@@ -419,10 +416,16 @@ pub fn copy_to_clipboard(text: &str) -> bool {
         }
     }
 
-    // Linux
+    // Linux — try Wayland (wl-copy) first, then fall back to X11 utilities.
+    // Issue #149 follow-up: wl-copy was missing from this code path so RMB →
+    // Copy reported "failed to copy to clipboard" on Wayland sessions.
     #[cfg(target_os = "linux")]
     {
-        for cmd in &["xclip -selection clipboard", "xsel --clipboard --input"] {
+        for cmd in &[
+            "wl-copy",
+            "xclip -selection clipboard",
+            "xsel --clipboard --input",
+        ] {
             let parts: Vec<&str> = cmd.split_whitespace().collect();
             if let Ok(mut child) = std::process::Command::new(parts[0])
                 .args(&parts[1..])

@@ -1,11 +1,13 @@
-use claurst_api::ChutesProvider;
 use claurst_api::provider::LlmProvider;
 use claurst_api::provider_types::{ProviderRequest, StreamEvent};
+use claurst_api::ChutesProvider;
 use claurst_core::types::Message;
 use futures::StreamExt;
 
 fn get_api_key() -> Option<String> {
-    std::env::var("CHUTES_API_KEY").ok().filter(|k| !k.is_empty())
+    std::env::var("CHUTES_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty())
 }
 
 #[tokio::test]
@@ -68,7 +70,10 @@ async fn test_e2ee_streaming_simple() {
                     StreamEvent::MessageStop => {
                         eprintln!("[MessageStop]");
                     }
-                    StreamEvent::Error { error_type, message } => {
+                    StreamEvent::Error {
+                        error_type,
+                        message,
+                    } => {
                         eprintln!("[Error] {}: {}", error_type, message);
                     }
                     _ => {
